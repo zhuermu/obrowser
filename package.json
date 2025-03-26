@@ -1,0 +1,49 @@
+{
+  "name": "obrowser",
+  "version": "1.0.0",
+  "description": "Cross-platform Object Storage Browser desktop application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "test": "jest"
+  },
+  "build": {
+    "appId": "com.zhuermu.obrowser.app",
+    "productName": "OBrowser",
+    "mac": {
+      "identity": "Your Developer ID Application: Your name (xxxxxx)",
+      "category": "public.app-category.utilities",
+      "icon": "obrowser.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "obrowser.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "obrowser.png"
+    }
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/s3-request-presigner": "^3.732.0",
+    "@azure/storage-blob": "^12.14.0",
+    "ali-oss": "^6.17.1",
+    "electron-store": "^8.1.0",
+    "vue": "^3.3.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0",
+    "jest": "^29.0.0",
+    "png2icons": "^2.0.1",
+    "sharp": "^0.33.5"
+  }
+}
