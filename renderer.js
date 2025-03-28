@@ -2046,7 +2046,7 @@ async function previewFile(file) {
 }
 
 // 渲染预览内容（分离自previewFile函数，保持原有预览逻辑）
-function renderPreview(file, result) {
+async function renderPreview(file, result) {
   const previewModal = document.getElementById('previewModal');
   const previewContent = document.getElementById('previewContent');
   
@@ -2086,24 +2086,88 @@ function renderPreview(file, result) {
         <pre style="white-space: pre-wrap; word-wrap: break-word; padding: 20px; margin: 0; font-size: 14px; line-height: 1.5; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;">${content}</pre>
       </div>
     `;
-  } else if (['html', 'htm'].includes(fileExtension)) {
-    // HTML file preview - using iframe instead of embed to fix black screen issue
+  } else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'avif'].includes(fileExtension)) {
+    // Image preview
     previewContent.innerHTML = `
-      <div style="text-align: center; height: 100%; display: flex; flex-direction: column;">
-        <div style="flex: 1; position: relative; min-height: 0; overflow: hidden; background: white;">
-          <iframe 
-            src="${result.content}" 
-            style="width: 100%; height: 100%; border: none;" 
-            sandbox="allow-scripts allow-same-origin allow-forms"
-            allow="fullscreen"
-          ></iframe>
+      <div style="height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8f9fa;">
+        <div style="max-width: 100%; max-height: 100%; overflow: auto; padding: 20px;">
+          <img src="${result.content}" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="${file.Key}">
         </div>
-        
-        <!-- Control panel for HTML files -->
+        <div style="background: #f8f9fa; padding: 10px; border-top: 1px solid #dee2e6; width: 100%; text-align: center;">
+          <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            <a href="#" onclick="downloadFile('${encodeURIComponent(file.Key)}'); return false;" class="button" style="display: inline-block; padding: 8px 15px; background: #0066cc; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              <i class="fa-solid fa-download"></i> Download Image
+            </a>
+            <a href="${result.content}" target="_blank" class="button" style="display: inline-block; padding: 8px 15px; background: #28a745; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              <i class="fa-solid fa-external-link-alt"></i> Open in New Window
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (['mp4', 'mov', 'webm'].includes(fileExtension)) {
+    // Video preview
+    previewContent.innerHTML = `
+      <div style="height: 100%; display: flex; flex-direction: column; background: #000;">
+        <div style="flex: 1; position: relative; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+          <video 
+            src="${result.content}" 
+            controls 
+            style="max-width: 100%; max-height: 100%;"
+            playsinline
+          ></video>
+        </div>
         <div style="background: #f8f9fa; padding: 10px; border-top: 1px solid #dee2e6;">
           <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
             <a href="#" onclick="downloadFile('${encodeURIComponent(file.Key)}'); return false;" class="button" style="display: inline-block; padding: 8px 15px; background: #0066cc; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              <i class="fa-solid fa-download"></i> Download Video
+            </a>
+            <a href="${result.content}" target="_blank" class="button" style="display: inline-block; padding: 8px 15px; background: #28a745; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              <i class="fa-solid fa-external-link-alt"></i> Open in New Window
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (['html', 'htm'].includes(fileExtension)) {
+    // HTML files - no preview, just download and open options
+    previewContent.innerHTML = `
+      <div style="text-align: center; height: 100%; display: flex; align-items: center; justify-content: center;">
+        <div style="background: #f8f9fa; padding: 40px; border-radius: 8px; box-shadow: 0 0 20px rgba(0,0,0,0.1); max-width: 80%;">
+          <div style="font-size: 64px; color: #6c757d; margin-bottom: 20px;">
+            <i class="fa-solid fa-file-code"></i>
+          </div>
+          <h3 style="margin-bottom: 20px; word-break: break-all;">${file.Key.split('/').pop()}</h3>
+          <p>HTML files cannot be previewed directly in the application.</p>
+          <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 20px;">
+            <a href="#" onclick="downloadFile('${encodeURIComponent(file.Key)}'); return false;" class="button" style="display: inline-block; padding: 12px 24px; background: #0066cc; color: white; border-radius: 4px; text-decoration: none; font-size: 16px;">
               <i class="fa-solid fa-download"></i> Download HTML File
+            </a>
+            <a href="${result.content}" target="_blank" class="button" style="display: inline-block; padding: 12px 24px; background: #28a745; color: white; border-radius: 4px; text-decoration: none; font-size: 16px;">
+              <i class="fa-solid fa-external-link-alt"></i> Open in New Window
+            </a>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(fileExtension)) {
+    // Office files preview using Microsoft Office Online Viewer
+    const officeViewerUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(result.content)}`;
+    previewContent.innerHTML = `
+      <div style="height: 100%; display: flex; flex-direction: column;">
+        <div style="flex: 1; position: relative; min-height: 0; overflow: hidden; background: white;">
+          <iframe 
+            src="${officeViewerUrl}" 
+            style="width: 100%; height: 100%; border: none;" 
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+            allow="fullscreen"
+            onerror="this.onerror=null; this.src='data:text/html,<div style=\'padding:20px;text-align:center;color:#dc3545;\'><h3>Error Loading Office Document</h3><p>Failed to load the document. This might be due to:</p><ul style=\'text-align:left;display:inline-block;\'><li>Cross-origin restrictions</li><li>Invalid document format</li><li>Security policies</li></ul><p>Try opening in a new window instead.</p></div>'"
+          ></iframe>
+        </div>
+        <div style="background: #f8f9fa; padding: 10px; border-top: 1px solid #dee2e6;">
+          <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+            <a href="#" onclick="downloadFile('${encodeURIComponent(file.Key)}'); return false;" class="button" style="display: inline-block; padding: 8px 15px; background: #0066cc; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
+              <i class="fa-solid fa-download"></i> Download Office File
             </a>
             <a href="${result.content}" target="_blank" class="button" style="display: inline-block; padding: 8px 15px; background: #28a745; color: white; border-radius: 4px; text-decoration: none; font-size: 14px;">
               <i class="fa-solid fa-external-link-alt"></i> Open in New Window
