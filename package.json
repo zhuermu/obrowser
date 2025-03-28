@@ -6,11 +6,15 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
     "test": "jest"
   },
   "build": {
     "appId": "com.zhuermu.obrowser.app",
     "productName": "OBrowser",
+    "copyright": "Copyright © 2024",
     "mac": {
       "identity": "Your Developer ID Application: Your name (xxxxxx)",
       "category": "public.app-category.utilities",
@@ -21,13 +25,83 @@
       "entitlementsInherit": "entitlements.mac.plist"
     },
     "win": {
-      "target": "nsis",
-      "icon": "obrowser.ico"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "obrowser.ico",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "publisherName": "Zhuermu",
+      "verifyUpdateCodeSignature": false,
+      "compression": "maximum",
+      "files": [
+        "**/*",
+        "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+        "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+        "!**/node_modules/*.d.ts",
+        "!**/node_modules/.bin",
+        "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+        "!.editorconfig",
+        "!**/._*",
+        "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+        "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+        "!**/{appveyor.yml,.travis.yml,circle.yml}",
+        "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OBrowser",
+      "uninstallDisplayName": "OBrowser",
+      "installerIcon": "obrowser.ico",
+      "uninstallerIcon": "obrowser.ico",
+      "installerHeaderIcon": "obrowser.ico",
+      "menuCategory": true,
+      "displayLanguageSelector": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "linux": {
       "target": "AppImage",
       "icon": "obrowser.png"
-    }
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
+      "!**/node_modules/*.d.ts",
+      "!**/node_modules/.bin",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+    ],
+    "asar": true,
+    "asarUnpack": [],
+    "compression": "maximum",
+    "afterSign": null,
+    "afterPack": null,
+    "afterAllArtifactBuild": null,
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "nodeGypRebuild": false,
+    "forceCodeSigning": false,
+    "publish": null
   },
   "author": "",
   "license": "MIT",
