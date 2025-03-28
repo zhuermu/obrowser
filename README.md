@@ -2,6 +2,10 @@
 
 Cross-platform desktop application for browsing and managing files across multiple cloud object storage services.
 
+UI:
+[!image.png](image.png)
+[!image2.png](image-1.png)
+
 ## Supported Cloud Storage Services
 
 - **AWS S3**: Amazon Simple Storage Service
@@ -99,6 +103,7 @@ The application is designed with extensibility in mind. To add support for addit
 2. Extend the `StorageClientInterface` class to implement required methods
 3. Register the new client type in the `StorageClientFactory`
 4. Update the UI to include the new storage type
+
 
 ## License
 
