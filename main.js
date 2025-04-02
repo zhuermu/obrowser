@@ -289,8 +289,11 @@ ipcMain.handle('upload-object', async (event, connectionId, bucket, key, filePat
     console.log(`Connection type: ${connection.type}, Region: ${connection.region}`);
     console.log(`File path: ${filePath}`);
     
+    // Read the file content
+    const fileContent = fs.readFileSync(filePath);
+    
     const client = await getStorageClient(connectionId);
-    await client.uploadObject(bucket, key, filePath);
+    await client.uploadObject(bucket, key, fileContent);
     console.log('Upload completed successfully');
     return { success: true };
   } catch (error) {
