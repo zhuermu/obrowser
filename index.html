@@ -346,6 +346,57 @@
       gap: 1rem;
       align-items: center;
     }
+    
+    /* 可排序列样式 */
+    .sortable-column {
+      cursor: pointer;
+      user-select: none;
+      position: relative;
+      padding-right: 20px;
+    }
+    
+    .sortable-column:hover {
+      background-color: rgba(0, 102, 204, 0.1);
+    }
+    
+    .sortable-column i {
+      position: absolute;
+      right: 5px;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0.5;
+    }
+    
+    .sortable-column i.fa-sort-up,
+    .sortable-column i.fa-sort-down {
+      opacity: 1;
+      color: #0066cc;
+    }
+    
+    /* 最近上传文件高亮样式 */
+    .recently-uploaded {
+      background-color: rgba(255, 248, 230, 0.7);
+      position: relative;
+      animation: fadeHighlight 5s ease-out;
+    }
+    
+    @keyframes fadeHighlight {
+      from { background-color: rgba(255, 248, 230, 1); }
+      to { background-color: rgba(255, 248, 230, 0.7); }
+    }
+    
+    .new-badge {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      background-color: #ff6b6b;
+      color: white;
+      font-size: 0.7rem;
+      font-weight: bold;
+      padding: 2px 6px;
+      border-radius: 10px;
+      z-index: 1;
+    }
     .loading-overlay {
       display: none;
       position: absolute;
@@ -543,6 +594,8 @@
       opacity: 0.7;
       transition: opacity 0.2s;
     }
+    
+    /* 移除了排序控件样式，保留列标题排序功能 */
     
     /* Improved search box styles */
     .toolbar input[type="text"] {

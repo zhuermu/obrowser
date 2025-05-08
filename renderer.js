@@ -1168,6 +1168,10 @@ function getFileIcon(item) {
   }
 }
 
+// 全局变量，用于存储当前排序状态
+let currentSortField = 'name'; // 默认按名称排序
+let currentSortDirection = 'asc'; // 默认升序排序
+
 async function loadFiles() {
   if (!currentConnection) return;
 
@@ -1303,18 +1307,56 @@ async function loadFiles() {
         fileList.appendChild(div);
       });
     } else if (result && result.type === 'objects' && Array.isArray(result.data)) {
-      // Restore to standard file list header, add path column
+      // Restore to standard file list header, add path column with sorting functionality
       if (columnHeader) {
         columnHeader.innerHTML = `
           <div></div>
           <div></div>
-          <div>Name</div>
-          <div>Size</div>
-          <div>Modified</div>
-          <div>Type</div>
-          <div>Storage Class</div>
+          <div class="sortable-column" data-sort="name">Name <i class="fa-solid fa-sort"></i></div>
+          <div class="sortable-column" data-sort="size">Size <i class="fa-solid fa-sort"></i></div>
+          <div class="sortable-column" data-sort="modified">Modified <i class="fa-solid fa-sort"></i></div>
+          <div class="sortable-column" data-sort="type">Type <i class="fa-solid fa-sort"></i></div>
+          <div class="sortable-column" data-sort="storageClass">Storage Class <i class="fa-solid fa-sort"></i></div>
           <div>Actions</div>
         `;
+        
+        // 添加排序列点击事件
+        const sortableColumns = columnHeader.querySelectorAll('.sortable-column');
+        sortableColumns.forEach(column => {
+          column.style.cursor = 'pointer';
+          column.addEventListener('click', () => {
+            const sortField = column.getAttribute('data-sort');
+            // 如果点击的是当前排序字段，则切换排序方向
+            if (sortField === currentSortField) {
+              currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+              currentSortField = sortField;
+              currentSortDirection = 'asc';
+            }
+            
+            // 更新排序图标
+            sortableColumns.forEach(col => {
+              const icon = col.querySelector('i');
+              if (col.getAttribute('data-sort') === currentSortField) {
+                icon.className = currentSortDirection === 'asc' ? 
+                  'fa-solid fa-sort-up' : 'fa-solid fa-sort-down';
+              } else {
+                icon.className = 'fa-solid fa-sort';
+              }
+            });
+            
+            // 重新加载文件列表
+            loadFiles();
+          });
+        });
+        
+        // 显示当前排序状态
+        const activeColumn = columnHeader.querySelector(`[data-sort="${currentSortField}"]`);
+        if (activeColumn) {
+          const icon = activeColumn.querySelector('i');
+          icon.className = currentSortDirection === 'asc' ? 
+            'fa-solid fa-sort-up' : 'fa-solid fa-sort-down';
+        }
       }
       
       if (result.data.length === 0) {
@@ -1322,13 +1364,78 @@ async function loadFiles() {
         return;
       }
       
-      result.data.forEach(item => {
+      // 对数据进行排序
+      const sortedData = [...result.data].sort((a, b) => {
+        // 文件夹始终排在前面
+        if (a.isFolder && !b.isFolder) return -1;
+        if (!a.isFolder && b.isFolder) return 1;
+        
+        // 根据当前排序字段进行排序
+        switch (currentSortField) {
+          case 'name':
+            // 获取文件名进行比较
+            const nameA = a.Key ? a.Key.split('/').pop() : '';
+            const nameB = b.Key ? b.Key.split('/').pop() : '';
+            return currentSortDirection === 'asc' ? 
+              nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+          
+          case 'size':
+            // 文件夹大小视为0
+            const sizeA = a.isFolder ? 0 : (a.Size || 0);
+            const sizeB = b.isFolder ? 0 : (b.Size || 0);
+            return currentSortDirection === 'asc' ? 
+              sizeA - sizeB : sizeB - sizeA;
+          
+          case 'modified':
+            // 比较最后修改时间
+            const dateA = a.LastModified ? new Date(a.LastModified).getTime() : 0;
+            const dateB = b.LastModified ? new Date(b.LastModified).getTime() : 0;
+            return currentSortDirection === 'asc' ? 
+              dateA - dateB : dateB - dateA;
+          
+          case 'type':
+            // 比较文件类型
+            const typeA = a.isFolder ? 'Folder' : (a.ContentType || '');
+            const typeB = b.isFolder ? 'Folder' : (b.ContentType || '');
+            return currentSortDirection === 'asc' ? 
+              typeA.localeCompare(typeB) : typeB.localeCompare(typeA);
+          
+          case 'storageClass':
+            // 比较存储类别
+            const storageA = a.StorageClass || '';
+            const storageB = b.StorageClass || '';
+            return currentSortDirection === 'asc' ? 
+              storageA.localeCompare(storageB) : storageB.localeCompare(storageA);
+          
+          default:
+            return 0;
+        }
+      });
+      
+      // 使用排序后的数据渲染文件列表
+      sortedData.forEach(item => {
         // Ensure item is valid, check necessary attributes
         if (!item) return;
         
         const div = document.createElement('div');
         div.className = `file-item${item.isFolder ? ' folder' : ''}`;
         
+        // 如果是最近上传的文件（10分钟内），添加高亮样式
+        if (!item.isFolder && item.LastModified) {
+          const uploadTime = new Date(item.LastModified).getTime();
+          const currentTime = new Date().getTime();
+          const timeDiff = currentTime - uploadTime; // 毫秒
+          
+          // 如果文件是10分钟内上传的，添加高亮样式
+          if (timeDiff < 10 * 60 * 1000) {
+            div.classList.add('recently-uploaded');
+            // 添加"新"标签
+            const newBadge = document.createElement('span');
+            newBadge.className = 'new-badge';
+            newBadge.textContent = 'NEW';
+            div.appendChild(newBadge);
+          }
+        }
         // Create checkbox container to prevent click propagation
         const checkboxContainer = document.createElement('div');
         checkboxContainer.className = 'checkbox-container';
@@ -1709,12 +1816,14 @@ async function uploadFile() {
       const files = Array.from(e.target.files);
       let uploadCount = 0;
       let errorCount = 0;
+      let uploadedFiles = []; // 记录上传成功的文件名
       
       for (const file of files) {
         try {
           const key = currentPrefix + file.name;
           await ipcRenderer.invoke('upload-object', currentConnection.id, currentBucket, key, file.path);
           uploadCount++;
+          uploadedFiles.push(file.name); // 记录上传成功的文件名
         } catch (error) {
           console.error('Error uploading file:', error);
           errorCount++;
@@ -1722,9 +1831,19 @@ async function uploadFile() {
         }
       }
       
+      // 上传完成后，自动按修改时间降序排序，以便查看最新上传的文件
+      if (uploadCount > 0) {
+        currentSortField = 'modified';
+        currentSortDirection = 'desc';
+      }
+      
       // Show a summary notification
-      if (errorCount === 0) {
-        showNotification(`Successfully uploaded ${uploadCount} file(s)`, 'success');
+      if (errorCount === 0 && uploadCount > 0) {
+        if (uploadCount === 1) {
+          showNotification(`Successfully uploaded: ${uploadedFiles[0]}`, 'success');
+        } else {
+          showNotification(`Successfully uploaded ${uploadCount} files`, 'success');
+        }
       } else if (uploadCount === 0) {
         showNotification(`Failed to upload all ${errorCount} file(s)`, 'error');
       } else {
@@ -2369,10 +2488,52 @@ document.addEventListener('DOMContentLoaded', function() {
   initializeDirectEventListeners();
 });
 
+// 排序相关函数
+function changeSortField(field) {
+  if (field !== currentSortField) {
+    currentSortField = field;
+    // 当切换排序字段时，默认使用降序排序（对于修改时间和大小）或升序排序（对于名称和类型）
+    if (field === 'modified' || field === 'size') {
+      currentSortDirection = 'desc';
+    } else {
+      currentSortDirection = 'asc';
+    }
+    loadFiles();
+  }
+}
+
+function toggleSortDirection() {
+  currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+  loadFiles();
+}
+
+// 更新列标题排序图标
+function updateColumnSortIcons() {
+  const sortableColumns = document.querySelectorAll('.sortable-column');
+  sortableColumns.forEach(col => {
+    const icon = col.querySelector('i');
+    if (col.getAttribute('data-sort') === currentSortField) {
+      icon.className = currentSortDirection === 'asc' ? 
+        'fa-solid fa-sort-up' : 'fa-solid fa-sort-down';
+    } else {
+      icon.className = 'fa-solid fa-sort';
+    }
+  });
+}
+
+// 在加载文件后更新排序图标
+const originalLoadFiles = loadFiles;
+loadFiles = async function() {
+  await originalLoadFiles.apply(this, arguments);
+  updateColumnSortIcons();
+};
+
 // Also call this function directly to ensure it's applied immediately
 initializeDirectEventListeners();
 
-// Make downloadFile available globally
+// Make functions available globally
 window.downloadFile = downloadFile;
+window.changeSortField = changeSortField;
+window.toggleSortDirection = toggleSortDirection;
 
 
