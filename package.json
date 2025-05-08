@@ -27,33 +27,19 @@
     "win": {
       "target": [
         {
-          "target": "nsis",
+          "target": "portable",
           "arch": ["x64"]
         },
         {
-          "target": "portable",
+          "target": "zip",
           "arch": ["x64"]
         }
       ],
       "icon": "obrowser.ico",
-      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "publisherName": "Zhuermu",
       "verifyUpdateCodeSignature": false,
-      "compression": "maximum",
-      "files": [
-        "**/*",
-        "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
-        "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
-        "!**/node_modules/*.d.ts",
-        "!**/node_modules/.bin",
-        "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
-        "!.editorconfig",
-        "!**/._*",
-        "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
-        "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
-        "!**/{appveyor.yml,.travis.yml,circle.yml}",
-        "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
-      ]
+      "compression": "normal"
     },
     "nsis": {
       "oneClick": false,
@@ -79,9 +65,7 @@
     },
     "files": [
       "**/*",
-      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
-      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
-      "!**/node_modules/*.d.ts",
+      "!**/node_modules/**/{CHANGELOG.md,README.md,README,readme.md,readme,test,__tests__,tests,powered-test,example,examples,*.d.ts}",
       "!**/node_modules/.bin",
       "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
       "!.editorconfig",
@@ -89,7 +73,33 @@
       "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
       "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
       "!**/{appveyor.yml,.travis.yml,circle.yml}",
-      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}"
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}",
+      "!**/node_modules/**/*.{map,ts,tsx,md,html,json}",
+      "!**/node_modules/**/LICENSE*",
+      "!**/node_modules/**/license*",
+      "!**/node_modules/**/.npmignore",
+      "!**/node_modules/**/AUTHORS*",
+      "!**/node_modules/**/CONTRIBUTORS*",
+      "!**/node_modules/**/CHANGELOG*",
+      "!**/node_modules/**/History.md",
+      "!**/node_modules/**/HISTORY.md",
+      "!**/node_modules/**/test/**",
+      "!**/node_modules/**/docs/**",
+      "!**/node_modules/**/doc/**",
+      "!**/node_modules/**/examples/**",
+      "!**/node_modules/**/coverage/**",
+      "!**/node_modules/**/.github/**",
+      "!**/node_modules/**/.vscode/**"
+    ],
+    "extraResources": [
+      {
+        "from": "obrowser.ico",
+        "to": "obrowser.ico"
+      },
+      {
+        "from": "obrowser.png",
+        "to": "obrowser.png"
+      }
     ],
     "asar": true,
     "asarUnpack": [],
