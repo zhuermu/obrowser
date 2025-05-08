@@ -3,8 +3,8 @@
 Cross-platform desktop application for browsing and managing files across multiple cloud object storage services.
 
 UI:
-[!image.png](image.png)
-[!image2.png](image-1.png)
+![Screenshot 1](image.png)
+![Screenshot 2](image-1.png)
 
 ## Supported Cloud Storage Services
 
