@@ -1,12 +1,12 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const Store = require('electron-store');
+const SimpleStore = require('./simple-store');
 const fs = require('fs');
 
 // Import storage client factory
 const StorageClientFactory = require('./storage-clients/StorageClientFactory');
 
-const store = new Store();
+const store = new SimpleStore();
 
 // Set application ID for Windows
 if (process.platform === 'win32') {

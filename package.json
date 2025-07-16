@@ -1,6 +1,6 @@
 {
   "name": "obrowser",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Cross-platform Object Storage Browser desktop application",
   "main": "main.js",
   "scripts": {
@@ -14,7 +14,7 @@
   "build": {
     "appId": "com.zhuermu.obrowser.app",
     "productName": "OBrowser",
-    "copyright": "Copyright © 2024",
+    "copyright": "Copyright © 2025",
     "mac": {
       "identity": "Your Developer ID Application: Your name (xxxxxx)",
       "category": "public.app-category.utilities",
@@ -28,11 +28,15 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "obrowser.ico",
@@ -65,7 +69,9 @@
     },
     "files": [
       "**/*",
-      "!**/node_modules/**/{CHANGELOG.md,README.md,README,readme.md,readme,test,__tests__,tests,powered-test,example,examples,*.d.ts}",
+      "!**/node_modules/**/{CHANGELOG.md,README.md,README,readme.md,readme}",
+      "!**/node_modules/**/{test,__tests__,tests,powered-test,example,examples}/**",
+      "!**/node_modules/**/*.d.ts",
       "!**/node_modules/.bin",
       "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
       "!.editorconfig",
@@ -74,7 +80,7 @@
       "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
       "!**/{appveyor.yml,.travis.yml,circle.yml}",
       "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}",
-      "!**/node_modules/**/*.{map,ts,tsx,md,html,json}",
+      "!**/node_modules/**/*.map",
       "!**/node_modules/**/LICENSE*",
       "!**/node_modules/**/license*",
       "!**/node_modules/**/.npmignore",
@@ -83,10 +89,8 @@
       "!**/node_modules/**/CHANGELOG*",
       "!**/node_modules/**/History.md",
       "!**/node_modules/**/HISTORY.md",
-      "!**/node_modules/**/test/**",
       "!**/node_modules/**/docs/**",
       "!**/node_modules/**/doc/**",
-      "!**/node_modules/**/examples/**",
       "!**/node_modules/**/coverage/**",
       "!**/node_modules/**/.github/**",
       "!**/node_modules/**/.vscode/**"
@@ -102,7 +106,6 @@
       }
     ],
     "asar": true,
-    "asarUnpack": [],
     "compression": "maximum",
     "afterSign": null,
     "afterPack": null,
@@ -120,7 +123,6 @@
     "@aws-sdk/s3-request-presigner": "^3.732.0",
     "@azure/storage-blob": "^12.14.0",
     "ali-oss": "^6.17.1",
-    "electron-store": "^8.1.0",
     "vue": "^3.3.0"
   },
   "devDependencies": {
