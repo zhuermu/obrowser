@@ -8,6 +8,16 @@ const StorageClientFactory = require('./storage-clients/StorageClientFactory');
 
 const store = new SimpleStore();
 
+// Handle uncaught exceptions to prevent EPIPE errors from crashing the app
+process.on('uncaughtException', (error) => {
+  // Ignore EPIPE errors which occur when stdout/stderr is closed
+  if (error.code === 'EPIPE' || error.errno === 'EPIPE') {
+    return;
+  }
+  // Log other errors
+  console.error('Uncaught Exception:', error);
+});
+
 // Set application ID for Windows
 if (process.platform === 'win32') {
   app.setAppUserModelId('com.obrowser.app');
@@ -75,10 +85,19 @@ function createWindow() {
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 
-  // Log errors
+  // Log errors - with error handling to prevent EPIPE errors
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    const levels = ['debug', 'info', 'warning', 'error'];
-    console.log(`[${levels[level] || 'info'}] ${message}`);
+    // Use setImmediate to defer logging and avoid EPIPE errors
+    setImmediate(() => {
+      try {
+        if (!mainWindow.isDestroyed() && process.stdout && process.stdout.writable) {
+          const levels = ['debug', 'info', 'warning', 'error'];
+          process.stdout.write(`[${levels[level] || 'info'}] ${message}\n`);
+        }
+      } catch (error) {
+        // Silently ignore write errors when stdout is closed
+      }
+    });
   });
 }
 

@@ -1504,7 +1504,29 @@ async function loadFiles() {
           };
           actionsContainer.appendChild(openButton);
           
-          // 2. Delete
+          // 2. Copy Path
+          const copyPathButton = document.createElement('button');
+          copyPathButton.className = 'action-button';
+          copyPathButton.title = 'Copy S3 path';
+          copyPathButton.innerHTML = '<i class="fa-solid fa-copy"></i>';
+          copyPathButton.onclick = async (e) => {
+            e.stopPropagation();
+            try {
+              // 构建 S3 路径格式: s3://bucket-name/path/to/folder/
+              const s3Path = `s3://${currentBucket}/${item.Key}`;
+              
+              // 复制到剪贴板
+              await navigator.clipboard.writeText(s3Path);
+              
+              showNotification(`Path copied: ${s3Path}`, 'success');
+            } catch (error) {
+              console.error('Error copying path:', error);
+              showNotification(`Failed to copy path: ${error.message}`, 'error');
+            }
+          };
+          actionsContainer.appendChild(copyPathButton);
+          
+          // 3. Delete
           const deleteButton = document.createElement('button');
           deleteButton.className = 'action-button';
           deleteButton.title = 'Delete folder';
@@ -1583,7 +1605,29 @@ async function loadFiles() {
             actionsContainer.appendChild(previewButton);
           }
           
-          // 2. Download
+          // 2. Copy Path
+          const copyPathButton = document.createElement('button');
+          copyPathButton.className = 'action-button';
+          copyPathButton.title = 'Copy S3 path';
+          copyPathButton.innerHTML = '<i class="fa-solid fa-copy"></i>';
+          copyPathButton.onclick = async (e) => {
+            e.stopPropagation();
+            try {
+              // 构建 S3 路径格式: s3://bucket-name/path/to/file
+              const s3Path = `s3://${currentBucket}/${item.Key}`;
+              
+              // 复制到剪贴板
+              await navigator.clipboard.writeText(s3Path);
+              
+              showNotification(`Path copied: ${s3Path}`, 'success');
+            } catch (error) {
+              console.error('Error copying path:', error);
+              showNotification(`Failed to copy path: ${error.message}`, 'error');
+            }
+          };
+          actionsContainer.appendChild(copyPathButton);
+          
+          // 3. Download
           const downloadButton = document.createElement('button');
           downloadButton.className = 'action-button';
           downloadButton.title = 'Download';
@@ -1614,7 +1658,7 @@ async function loadFiles() {
           };
           actionsContainer.appendChild(downloadButton);
           
-          // 3. Delete
+          // 4. Delete
           const deleteButton = document.createElement('button');
           deleteButton.className = 'action-button';
           deleteButton.title = 'Delete';
