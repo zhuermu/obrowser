@@ -1,6 +1,6 @@
 {
   "name": "obrowser",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Cross-platform Object Storage Browser desktop application",
   "main": "main.js",
   "scripts": {
