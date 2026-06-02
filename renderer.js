@@ -28,6 +28,39 @@ function hideButtonLoading(buttonId) {
   button.querySelector('.button-spinner').style.display = 'none';
 }
 
+// Toggle AWS S3 auth-method sub-fields (Access Key vs AWS Profile). Must be
+// called whenever the storage type becomes 'aws-s3' or the auth method dropdown
+// value changes.
+function updateAwsAuthFields() {
+  const authSelect = document.getElementById('awsAuthMethod');
+  if (!authSelect) return;
+  const method = authSelect.value || 'access-key';
+
+  const showAccessKey = method === 'access-key';
+  const showProfile = method === 'profile';
+
+  document.querySelectorAll('#connectionForm .aws-auth-accesskey').forEach(el => {
+    el.style.display = showAccessKey ? 'block' : 'none';
+  });
+  document.querySelectorAll('#connectionForm .aws-auth-profile').forEach(el => {
+    el.style.display = showProfile ? 'block' : 'none';
+  });
+
+  // In AWS Profile mode, Endpoint and Region come from the profile itself
+  // (~/.aws/config) or are resolved per bucket — hide them to avoid confusion.
+  // Only applies when the storage type is aws-s3; PCG/Azure/Aliyun continue
+  // to manage Endpoint/Region via their own rules.
+  const storageTypeSel = document.getElementById('storageType');
+  const storageType = storageTypeSel ? storageTypeSel.value : null;
+  if (storageType === 'aws-s3') {
+    const endpointField = document.getElementById('endpointField');
+    const regionField = document.getElementById('regionField');
+    if (endpointField) endpointField.style.display = showProfile ? 'none' : 'block';
+    if (regionField) regionField.style.display = showProfile ? 'none' : 'block';
+  }
+}
+window.updateAwsAuthFields = updateAwsAuthFields;
+
 // Add new function for cloud storage type handling
 function updateFormFields() {
   const storageType = document.getElementById('storageType').value;
@@ -78,9 +111,9 @@ function updateFormFields() {
     const endpoint = document.getElementById('endpoint');
     if (endpoint && endpoint.style.display !== 'none' && (!endpoint.value || endpoint.value.trim() === '')) {
       switch(storageType) {
-        case 'aws-s3':
-          endpoint.value = 'https://s3.amazonaws.com';
-          break;
+        // aws-s3: intentionally no default — endpoint is optional and the
+        // SDK resolves the correct regional URL on its own. Forcing a value
+        // like https://s3.amazonaws.com breaks cross-region operations.
         case 'azure-blob':
           endpoint.value = 'https://<account-name>.blob.core.windows.net';
           break;
@@ -89,6 +122,12 @@ function updateFormFields() {
           break;
       }
     }
+  }
+
+  // For AWS S3, apply auth-method sub-visibility rules on top of the generic
+  // storage-type visibility handling above.
+  if (storageType === 'aws-s3') {
+    updateAwsAuthFields();
   }
   
   // Special handling for regionField
@@ -333,20 +372,23 @@ async function loadConnections() {
   if (currentConnection) {
     const connectionStatus = document.getElementById('connectionStatus');
     if (connectionStatus) {
-      connectionStatus.style.display = 'block';
-      
-      // Based on different storage types, display different messages
-      const storageTypeMap = {
-        'aws-s3': 'AWS S3',
-        'azure-blob': 'Azure Blob',
-        'aliyun-oss': 'Aliyun OSS',
-        'pcg': 'PCG'
-      };
-      const storageTypeName = storageTypeMap[currentConnection.type] || currentConnection.type || 'AWS S3';
-      
-      connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
-      
-      // Also update document title
+      // Only render a placeholder here if selectConnection hasn't set up the
+      // status bar yet (e.g. connection list refreshed before any selection).
+      // selectConnection owns the full rendering, including the region switcher.
+      if (!connectionStatus.dataset.ownedBySelect) {
+        connectionStatus.style.display = 'flex';
+
+        const storageTypeMap = {
+          'aws-s3': 'AWS S3',
+          'azure-blob': 'Azure Blob',
+          'aliyun-oss': 'Aliyun OSS',
+          'pcg': 'PCG'
+        };
+        const storageTypeName = storageTypeMap[currentConnection.type] || currentConnection.type || 'AWS S3';
+        connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
+      }
+
+      // Always refresh the document title to match the current connection.
       document.title = `OBrowser - ${currentConnection.name}`;
     }
   } else {
@@ -373,12 +415,11 @@ function showNewConnectionModal() {
   const storageTypeSelect = form.elements.type;
   storageTypeSelect.value = 'aws-s3';
   
-  // Set default endpoint for AWS S3
+  // Leave endpoint empty by default — standard AWS S3 is resolved
+  // automatically by the SDK. User can fill it only for MinIO or other
+  // S3-compatible / custom endpoints.
   const endpoint = document.getElementById('endpoint');
-  if (endpoint) {
-    endpoint.value = 'https://s3.amazonaws.com';
-    console.log('Initial AWS S3 endpoint set:', endpoint.value);
-  }
+  if (endpoint) endpoint.value = '';
   
   // Ensure proper initialization of form fields
   updateFormFields();
@@ -534,19 +575,42 @@ window.renderer_editConnection = function(connection) {
       const region = document.getElementById('region');
       const accessKey = document.getElementById('accessKey');
       const secretKey = document.getElementById('secretKey');
-      
+      const sessionToken = document.getElementById('sessionToken');
+      const authMethodEl = document.getElementById('awsAuthMethod');
+      const profileEl = document.getElementById('awsProfile');
+
+      // Default to 'access-key' for legacy connections that predate authMethod.
+      const method = connection.authMethod || 'access-key';
+      if (authMethodEl) authMethodEl.value = method;
+
       if (endpoint) {
-        endpoint.value = connection.endpoint || 'https://s3.amazonaws.com';
+        // For profile mode we don't force a default endpoint: letting the SDK
+        // pick the regional endpoint avoids region mismatches.
+        if (method === 'profile') {
+          endpoint.value = connection.endpoint || '';
+        } else {
+          endpoint.value = connection.endpoint || 'https://s3.amazonaws.com';
+        }
         console.log('Setting AWS endpoint field:', connection.endpoint);
         endpoint.style.display = 'block';
       }
       if (region) {
-        region.value = connection.region || 'us-east-1';
+        // Region is optional — leave blank to let the client use us-east-1
+        // for ListBuckets (global API) and rely on followRegionRedirects for
+        // per-bucket ops.
+        region.value = connection.region || '';
         console.log('Setting AWS region field:', connection.region);
         region.style.display = 'block';
       }
+      if (profileEl) profileEl.value = connection.profile || '';
       if (accessKey) accessKey.value = connection.accessKey || '';
       if (secretKey) secretKey.value = connection.secretKey || '';
+      if (sessionToken) sessionToken.value = connection.sessionToken || '';
+
+      // Apply auth-method field visibility now that values are populated.
+      if (typeof updateAwsAuthFields === 'function') {
+        updateAwsAuthFields();
+      }
     }
     
     // Set common fields
@@ -599,6 +663,13 @@ window.renderer_editConnection = function(connection) {
       modalContent.querySelectorAll('.form-group[style*="display: block"] input, .form-group[style*="display: block"] select').forEach(input => {
         input.style.display = 'block';
       });
+
+      // Re-apply AWS auth-method visibility last so Profile mode correctly
+      // hides Access Key/Secret/Session Token (and Endpoint/Region) even after
+      // the generic storage-type loop above set them all to display: block.
+      if (storageType === 'aws-s3' && typeof updateAwsAuthFields === 'function') {
+        updateAwsAuthFields();
+      }
     }
     
     console.log('Editing connection complete, form values set with ID:', connection.id);
@@ -697,23 +768,32 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
         case 'aws-s3':
           // Get required elements
           const awsEndpoint = document.getElementById('endpoint');
-          const awsRegion = document.getElementById('region');
-          const awsAccessKey = document.getElementById('accessKey');
-          const awsSecretKey = document.getElementById('secretKey');
-          
-          // Validate regardless of visibility
-          if (awsEndpoint && !awsEndpoint.value) {
+          const awsAuthMethodEl = document.getElementById('awsAuthMethod');
+          const awsAuthMethod = awsAuthMethodEl ? awsAuthMethodEl.value : 'access-key';
+
+          // Endpoint is optional for profile mode (SDK picks the default
+          // regional endpoint). Region is now optional too — S3 ListBuckets
+          // is a global API, and followRegionRedirects handles per-bucket
+          // routing automatically.
+          if (awsEndpoint && !awsEndpoint.value && awsAuthMethod !== 'profile') {
             formIsValid = false;
             errorMessage = 'Please enter Endpoint';
-          } else if (awsRegion && !awsRegion.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Region';
-          } else if (awsAccessKey && !awsAccessKey.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Access Key';
-          } else if (awsSecretKey && !awsSecretKey.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Secret Key';
+          } else if (awsAuthMethod === 'profile') {
+            const profileInput = document.getElementById('awsProfile');
+            if (!profileInput || !profileInput.value.trim()) {
+              formIsValid = false;
+              errorMessage = 'Please enter AWS Profile name';
+            }
+          } else {
+            const awsAccessKey = document.getElementById('accessKey');
+            const awsSecretKey = document.getElementById('secretKey');
+            if (awsAccessKey && !awsAccessKey.value) {
+              formIsValid = false;
+              errorMessage = 'Please enter Access Key';
+            } else if (awsSecretKey && !awsSecretKey.value) {
+              formIsValid = false;
+              errorMessage = 'Please enter Secret Key';
+            }
           }
           break;
         
@@ -854,16 +934,39 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
         break;
         
       case 'aws-s3':
-        const awsEndpoint = document.getElementById('endpoint');
-        const awsRegion = document.getElementById('region');
-        const awsAccessKey = document.getElementById('accessKey');
-        const awsSecretKey = document.getElementById('secretKey');
-        
-        // Always save these values regardless of field visibility
-        if (awsEndpoint) connection.endpoint = awsEndpoint.value || 'https://s3.amazonaws.com';
-        if (awsRegion) connection.region = awsRegion.value || 'us-east-1';
-        if (awsAccessKey) connection.accessKey = awsAccessKey.value;
-        if (awsSecretKey) connection.secretKey = awsSecretKey.value;
+        const awsEndpointEl = document.getElementById('endpoint');
+        const awsRegionEl = document.getElementById('region');
+        const awsAuthMethodSel = document.getElementById('awsAuthMethod');
+        const awsMethod = awsAuthMethodSel ? awsAuthMethodSel.value : 'access-key';
+
+        connection.authMethod = awsMethod;
+
+        if (awsMethod === 'profile') {
+          // Profile mode: endpoint and region come from the profile itself
+          // (or are resolved per-bucket at runtime). Don't persist defaults
+          // that would conflict with the profile's own config.
+          connection.endpoint = '';
+          connection.region = '';
+          const profileEl = document.getElementById('awsProfile');
+          connection.profile = profileEl ? profileEl.value.trim() : '';
+          // Clear any previously persisted static credentials so they don't
+          // linger in the store after switching auth methods.
+          connection.accessKey = '';
+          connection.secretKey = '';
+          connection.sessionToken = '';
+        } else {
+          if (awsEndpointEl) connection.endpoint = awsEndpointEl.value || '';
+          if (awsRegionEl) connection.region = awsRegionEl.value || '';
+          const awsAccessKeyEl = document.getElementById('accessKey');
+          const awsSecretKeyEl = document.getElementById('secretKey');
+          const awsSessionTokenEl = document.getElementById('sessionToken');
+          if (awsAccessKeyEl) connection.accessKey = awsAccessKeyEl.value;
+          if (awsSecretKeyEl) connection.secretKey = awsSecretKeyEl.value;
+          connection.sessionToken = awsSessionTokenEl && awsSessionTokenEl.value
+            ? awsSessionTokenEl.value
+            : '';
+          connection.profile = '';
+        }
         break;
         
       case 'pcg':
@@ -953,7 +1056,8 @@ async function selectConnection(connection) {
       // Update connection status display
       const connectionStatus = document.getElementById('connectionStatus');
       if (connectionStatus) {
-        connectionStatus.style.display = 'block';
+        connectionStatus.style.display = 'flex';
+        connectionStatus.dataset.ownedBySelect = '1';
         // Based on different storage types, display different messages
         const storageTypeMap = {
           'aws-s3': 'AWS S3',
@@ -963,10 +1067,96 @@ async function selectConnection(connection) {
         };
         const storageTypeName = storageTypeMap[currentConnection.type] || currentConnection.type || 'AWS S3';
         connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
-        
-        // Also show region information for AWS S3
-        if (currentConnection.type === 'aws-s3' && currentConnection.region) {
-          connectionStatus.innerHTML += ` (Region: ${currentConnection.region})`;
+
+        // For AWS S3, append a region switcher so the user can change region
+        // without editing the saved connection. Region is persisted as an
+        // in-memory override in the main process.
+        if (currentConnection.type === 'aws-s3') {
+          const regionContainer = document.createElement('span');
+          regionContainer.style.marginLeft = 'auto';
+          regionContainer.style.display = 'inline-flex';
+          regionContainer.style.alignItems = 'center';
+          regionContainer.style.gap = '0.4rem';
+
+          const regionLabel = document.createElement('span');
+          regionLabel.style.fontSize = '0.85rem';
+          regionLabel.style.color = '#6c757d';
+          regionLabel.textContent = 'Region:';
+
+          const regionSelect = document.createElement('select');
+          regionSelect.id = 'regionSwitcher';
+          regionSelect.style.padding = '0.3rem 0.5rem';
+          regionSelect.style.border = '1px solid #d2d2d7';
+          regionSelect.style.borderRadius = '6px';
+          regionSelect.style.fontSize = '0.85rem';
+          regionSelect.style.background = 'white';
+
+          // Common S3 regions. "(auto)" means "let the SDK pick us-east-1
+          // for ListBuckets and follow region redirects per bucket".
+          const regions = [
+            { value: '', label: '(auto-detect)' },
+            { value: 'us-east-1', label: 'us-east-1 (N. Virginia)' },
+            { value: 'us-east-2', label: 'us-east-2 (Ohio)' },
+            { value: 'us-west-1', label: 'us-west-1 (N. California)' },
+            { value: 'us-west-2', label: 'us-west-2 (Oregon)' },
+            { value: 'eu-west-1', label: 'eu-west-1 (Ireland)' },
+            { value: 'eu-central-1', label: 'eu-central-1 (Frankfurt)' },
+            { value: 'ap-northeast-1', label: 'ap-northeast-1 (Tokyo)' },
+            { value: 'ap-southeast-1', label: 'ap-southeast-1 (Singapore)' },
+            { value: 'ap-southeast-2', label: 'ap-southeast-2 (Sydney)' },
+            { value: 'ap-south-1', label: 'ap-south-1 (Mumbai)' },
+            { value: 'ca-central-1', label: 'ca-central-1 (Canada)' },
+            { value: 'sa-east-1', label: 'sa-east-1 (São Paulo)' }
+          ];
+          const saved = currentConnection.region || '';
+          // Ensure the saved region is selectable even if not in the preset list.
+          if (saved && !regions.some(r => r.value === saved)) {
+            regions.push({ value: saved, label: saved });
+          }
+          regions.forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r.value;
+            opt.textContent = r.label;
+            if (r.value === saved) opt.selected = true;
+            regionSelect.appendChild(opt);
+          });
+
+          regionSelect.onchange = async () => {
+            const chosen = regionSelect.value;
+            try {
+              showLoading(`Switching region to ${chosen || 'auto'}...`);
+              await ipcRenderer.invoke('set-region-override', currentConnection.id, chosen);
+              // Reset bucket/prefix because they may not exist in the new region.
+              currentBucket = null;
+              currentPrefix = '';
+              updateBreadcrumb();
+              await loadFiles();
+              // Check whether the new region actually has any buckets so the
+              // user isn't confused by an empty list after switching.
+              const fileList = document.getElementById('fileList');
+              const hasItems = fileList && fileList.querySelector('.file-item');
+              if (chosen && !hasItems) {
+                showNotification(
+                  `No buckets found in ${chosen}. The account may not have any buckets in this region.`,
+                  'info'
+                );
+              } else {
+                showNotification(
+                  chosen ? `Showing buckets in ${chosen}` : 'Showing all buckets (auto-detect)',
+                  'info'
+                );
+              }
+            } catch (err) {
+              console.error('Region switch failed:', err);
+              showNotification(`Failed to switch region: ${err.message}`, 'error');
+            } finally {
+              hideLoading();
+            }
+          };
+
+          regionContainer.appendChild(regionLabel);
+          regionContainer.appendChild(regionSelect);
+          connectionStatus.appendChild(regionContainer);
         }
       }
       
@@ -1114,6 +1304,45 @@ function updateBreadcrumb() {
   
   breadcrumb.innerHTML = html;
 }
+
+/**
+ * Navigate one level up from the current location:
+ *   - inside a folder  → pop the last prefix segment
+ *   - at bucket root   → go back to the bucket list (unless the connection
+ *                        is pinned to a specific bucket)
+ *   - at bucket list   → nothing to do
+ */
+async function navigateUp() {
+  if (!currentConnection) return;
+
+  // Case 1: we're inside a prefix — pop the trailing segment.
+  if (currentPrefix && currentPrefix !== '') {
+    const trimmed = currentPrefix.replace(/\/+$/, '');
+    const idx = trimmed.lastIndexOf('/');
+    const parentPrefix = idx >= 0 ? trimmed.slice(0, idx + 1) : '';
+    await navigateTo(parentPrefix);
+    return;
+  }
+
+  // Case 2: at bucket root. If the connection isn't pinned to a specific
+  // bucket, going "up" means back to the bucket list.
+  if (currentBucket) {
+    // Respect a connection-level bucket lock: if the user saved the
+    // connection with a specific bucket, don't escape out of it.
+    const pinned = currentConnection.bucket && currentConnection.bucket === currentBucket;
+    if (!pinned) {
+      currentBucket = null;
+      currentPrefix = '';
+      updateBreadcrumb();
+      await loadFiles();
+      return;
+    }
+  }
+
+  // Case 3: already at the top (bucket list or pinned bucket root).
+  showNotification('Already at the top level', 'info');
+}
+window.navigateUp = navigateUp;
 
 async function navigateTo(prefix) {
   showLoading('Loading...');
@@ -2478,6 +2707,23 @@ async function downloadFile(encodedKey) {
 document.addEventListener('DOMContentLoaded', () => {
   updateFormFields(); // Initialize form fields
   loadConnections(); // Load the connections when the page loads
+
+  // Keyboard shortcut: Alt+ArrowLeft goes up one level, mirroring Finder.
+  // Ignored while typing in inputs / textareas / contenteditable regions.
+  document.addEventListener('keydown', (e) => {
+    const target = e.target;
+    const typing = target && (
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT' ||
+      target.isContentEditable
+    );
+    if (typing) return;
+    if (e.altKey && e.key === 'ArrowLeft') {
+      e.preventDefault();
+      navigateUp();
+    }
+  });
 });
 
 // Add this function at the end of the file
@@ -2508,8 +2754,11 @@ function initializeDirectEventListeners() {
           // Set appropriate default based on storage type
           switch(selectedType) {
             case 'aws-s3':
-              endpointInput.value = 'https://s3.amazonaws.com';
-              console.log('Direct handler: Set AWS S3 default endpoint');
+              // Intentionally left blank — standard AWS S3 endpoints are
+              // auto-resolved by the SDK. Setting a default URL breaks
+              // cross-region operations.
+              endpointInput.value = '';
+              console.log('Direct handler: Cleared endpoint for AWS S3 (SDK auto-resolves)');
               break;
             case 'azure-blob':
               endpointInput.value = 'https://<account-name>.blob.core.windows.net';

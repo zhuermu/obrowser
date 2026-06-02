@@ -8,6 +8,12 @@ const StorageClientFactory = require('./storage-clients/StorageClientFactory');
 
 const store = new SimpleStore();
 
+// Per-connection region override applied in-memory for the current session.
+// Set via the `set-region-override` IPC so the user can switch regions from
+// the UI without mutating the saved connection config. Cleared when the
+// connection is deselected or when the app restarts.
+const regionOverrides = new Map();
+
 // Handle uncaught exceptions to prevent EPIPE errors from crashing the app
 process.on('uncaughtException', (error) => {
   // Ignore EPIPE errors which occur when stdout/stderr is closed
@@ -132,15 +138,33 @@ async function getStorageClient(connectionId) {
   // Default to 'aws-s3' for backward compatibility with existing connections
   const storageType = connection.type || 'aws-s3';
   
+  // Apply any in-memory region override (set by the region switcher UI).
+  const override = regionOverrides.get(connectionId);
+  const effectiveConnection = override
+    ? { ...connection, region: override }
+    : { ...connection };
+
   // Log connection details for debugging
   console.log(`Creating storage client for connection ID: ${connectionId}`);
   console.log(`Connection type: ${storageType}`);
-  console.log(`Connection endpoint: ${connection.endpoint}`);
-  console.log(`Connection region: ${connection.region}`);
+  console.log(`Connection endpoint: ${effectiveConnection.endpoint}`);
+  console.log(`Connection region: ${effectiveConnection.region}${override ? ' (overridden)' : ''}`);
   
   // Always create a new client instance to avoid caching issues
-  return await StorageClientFactory.createClient(storageType, {...connection});
+  return await StorageClientFactory.createClient(storageType, effectiveConnection);
 }
+
+// Allow the renderer to set/clear an in-memory region override without
+// persisting it to the saved connection. Useful for quick region switching.
+ipcMain.handle('set-region-override', async (event, connectionId, region) => {
+  if (!connectionId) return false;
+  if (region && typeof region === 'string' && region.trim()) {
+    regionOverrides.set(connectionId, region.trim());
+  } else {
+    regionOverrides.delete(connectionId);
+  }
+  return true;
+});
 
 // Get supported client types
 ipcMain.handle('get-supported-client-types', async () => {

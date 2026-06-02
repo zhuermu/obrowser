@@ -510,6 +510,13 @@
     #connectionForm div.pcg {
       display: none; /* Hidden by default, controlled by JavaScript */
     }
+
+    /* AWS auth-method subgroups - hidden by default, shown by JS based on
+       the selected auth method (access-key vs profile). */
+    #connectionForm .form-group.aws-auth-accesskey,
+    #connectionForm .form-group.aws-auth-profile {
+      display: none;
+    }
     
     /* When a specific type is selected, JavaScript will add corresponding styles to display these fields */
     
@@ -637,7 +644,11 @@
       <button onclick="showNewConnectionModal()" class="icon-button"><i class="fa-solid fa-plus"></i> Add Connection</button>
     </div>
     <div class="main-content">
+      <div id="connectionStatus" style="display: none; padding: 0.5rem 0.75rem; background: #f0f7ff; border-radius: 8px; margin-bottom: 0.5rem; font-size: 0.9rem; align-items: center; gap: 0.75rem; flex-wrap: wrap;"></div>
       <div class="toolbar">
+        <button onclick="navigateUp()" id="upButton" class="icon-button" title="Up one level">
+          <i class="fa-solid fa-arrow-up"></i> Up
+        </button>
         <button onclick="uploadFile()" id="uploadButton" class="icon-button">
           <i class="fa-solid fa-upload"></i> Upload
           <div class="button-spinner"></div>
@@ -699,7 +710,7 @@
         
         <!-- Common fields for all storage types -->
         <div class="form-group" id="endpointField">
-          <label class="required-field aws-s3 pcg azure-blob">Endpoint</label>
+          <label class="aws-s3 pcg azure-blob">Endpoint <span class="aws-s3" style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — only for custom / S3-compatible endpoints)</span></label>
           <label class="required-field aliyun-oss conditional-field">External Endpoint <span style="font-weight: normal; font-style: italic; color: #6c757d;">(or provide Region below)</span></label>
           
           <!-- Aliyun OSS specific endpoint field -->
@@ -709,14 +720,15 @@
           
           <!-- Standard endpoint field for AWS, Azure, PCG -->
           <div class="aws-s3 pcg azure-blob">
-            <input type="text" name="endpoint" id="endpoint" placeholder="Example: s3.amazonaws.com">
+            <input type="text" name="endpoint" id="endpoint" placeholder="Leave blank for standard AWS S3">
           </div>
         </div>
         <div class="form-group" id="regionField">
-          <label class="required-field aws-s3 pcg">Region</label>
+          <label class="aws-s3">Region <span style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — auto-detected per bucket)</span></label>
+          <label class="required-field pcg">Region</label>
           <label class="aliyun-oss conditional-field">Region <span style="font-weight: normal; font-style: italic; color: #6c757d;">(or provide Endpoint above)</span></label>
           <div class="aws-s3 pcg">
-            <input type="text" name="region" id="region" placeholder="Example: us-east-1">
+            <input type="text" name="region" id="region" placeholder="Example: us-east-1 (leave blank to auto-detect)">
           </div>
           <div class="aliyun-oss conditional-field">
             <input type="text" name="aliyun_region" id="aliyun_region" placeholder="Example: oss-cn-hangzhou">
@@ -724,16 +736,41 @@
         </div>
         
         <!-- AWS S3 and PCG fields -->
-        <div class="form-group aws-s3 pcg">
+        <div class="form-group aws-s3">
+          <label class="required-field">Auth Method</label>
+          <select name="authMethod" id="awsAuthMethod" onchange="updateAwsAuthFields()">
+            <option value="access-key">Access Key (AKSK / STS)</option>
+            <option value="profile">AWS Shared Profile (~/.aws)</option>
+          </select>
+          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+            Tip: "AWS Shared Profile" is more secure — credentials are managed by aws-cli and support SSO, AssumeRole, MFA, and auto-refresh.
+          </div>
+        </div>
+        <div class="form-group aws-s3 aws-auth-profile">
+          <label class="required-field">Profile Name</label>
+          <div>
+            <input type="text" name="profile" id="awsProfile" placeholder="e.g., my-sso-profile">
+          </div>
+          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+            The profile must exist in <code>~/.aws/credentials</code> or <code>~/.aws/config</code> and have a usable credential source (SSO, AssumeRole, or static keys). SSO users: run <code>aws sso login --profile &lt;name&gt;</code> in a terminal first.
+          </div>
+        </div>
+        <div class="form-group aws-s3 pcg aws-auth-accesskey">
           <label class="required-field">Access Key</label>
           <div>
             <input type="text" name="accessKey" id="accessKey" placeholder="Access Key ID">
           </div>
         </div>
-        <div class="form-group aws-s3 pcg">
+        <div class="form-group aws-s3 pcg aws-auth-accesskey">
           <label class="required-field">Secret Key</label>
           <div>
             <input type="password" name="secretKey" id="secretKey">
+          </div>
+        </div>
+        <div class="form-group aws-s3 aws-auth-accesskey">
+          <label>Session Token <span style="font-weight: normal; font-style: italic; color: #6c757d;">(optional, for STS temporary credentials)</span></label>
+          <div>
+            <input type="password" name="sessionToken" id="sessionToken" placeholder="Only needed for temporary STS credentials">
           </div>
         </div>
 

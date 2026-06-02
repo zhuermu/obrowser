@@ -140,6 +140,7 @@
   "license": "MIT",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.0.0",
+    "@aws-sdk/credential-providers": "^3.1043.0",
     "@aws-sdk/s3-request-presigner": "^3.732.0",
     "@azure/storage-blob": "^12.14.0",
     "ali-oss": "^6.17.1",
