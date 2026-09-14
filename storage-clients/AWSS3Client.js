@@ -9,7 +9,9 @@ const {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
-  DeleteObjectsCommand
+  DeleteObjectsCommand,
+  HeadBucketCommand,
+  GetBucketLocationCommand
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { fromIni } = require('@aws-sdk/credential-providers');
@@ -37,6 +39,40 @@ function isStandardAwsEndpoint(endpoint) {
   // amazonaws.com (commercial), amazonaws.com.cn (China), sc2s.sgov.gov (IC),
   // c2s.ic.gov (IC), amazonaws-us-gov.com (GovCloud).
   return /(^|\.)s3([.-][a-z0-9-]+)?\.(amazonaws\.com(\.cn)?|amazonaws-us-gov\.com|c2s\.ic\.gov|sc2s\.sgov\.gov)$/i.test(host);
+}
+
+/**
+ * Process-wide cache of bucket -> home region. Bucket regions are immutable
+ * for the lifetime of a bucket, and `main.js` builds a brand new client for
+ * every IPC call, so caching at module scope avoids repeating the HeadBucket
+ * probe on every listing / download.
+ */
+const bucketRegionCache = new Map();
+
+/**
+ * Read the `x-amz-bucket-region` hint S3 attaches to both successful and
+ * failed (301 / 400) bucket requests. Works for SDK responses and for
+ * ServiceExceptions, whose $metadata carries the same headers.
+ */
+function readBucketRegionHeader(source) {
+  if (!source) return undefined;
+  const headers =
+    (source.$metadata && source.$metadata.httpHeaders) ||
+    (source.$response && source.$response.headers) ||
+    null;
+  if (!headers) return undefined;
+  return headers['x-amz-bucket-region'] || headers['X-Amz-Bucket-Region'];
+}
+
+/**
+ * Normalize a GetBucketLocation `LocationConstraint` into a real region id.
+ * S3 returns an empty/null constraint for us-east-1 and the legacy alias "EU"
+ * for eu-west-1.
+ */
+function normalizeLocationConstraint(location) {
+  if (!location || location === 'null') return 'us-east-1';
+  if (location === 'EU') return 'eu-west-1';
+  return location;
 }
 
 /**
@@ -155,6 +191,16 @@ class AWSS3Client extends StorageClientInterface {
   constructor() {
     super();
     this.client = null;
+    // Signing region of `this.client`.
+    this.baseRegion = null;
+    // Shared credential provider instance — reused by per-region clients so
+    // SSO / AssumeRole tokens are resolved (and refreshed) only once.
+    this.credentials = null;
+    // Set when the connection points at a non-AWS S3-compatible host, in which
+    // case there is no per-bucket region to discover.
+    this.usesCustomEndpoint = false;
+    // region -> S3Client, lazily created by `getClientForBucket`.
+    this.regionClients = new Map();
   }
 
   /**
@@ -165,6 +211,7 @@ class AWSS3Client extends StorageClientInterface {
    */
   async initialize(config) {
     const credentials = buildCredentials(config);
+    this.credentials = credentials;
 
     // Region handling:
     //   - If user provided a region, use it.
@@ -182,11 +229,14 @@ class AWSS3Client extends StorageClientInterface {
     // host. Standard AWS endpoints are omitted so the SDK can resolve the right
     // regional URL per request — required for BucketRegion filtering and for
     // cross-region bucket redirects to work.
-    if (config.endpoint && !isStandardAwsEndpoint(config.endpoint)) {
+    this.usesCustomEndpoint = !!(config.endpoint && !isStandardAwsEndpoint(config.endpoint));
+    if (this.usesCustomEndpoint) {
       clientConfig.endpoint = config.endpoint;
     }
 
     this.client = new S3Client(clientConfig);
+    this.baseRegion = clientConfig.region;
+    this.regionClients.clear();
     
     // Store original config for potential reconnection and error diagnostics
     this.originalConfig = { ...config };
@@ -202,13 +252,11 @@ class AWSS3Client extends StorageClientInterface {
         await this.client.send(command);
         console.log(`Successfully validated S3 client configuration with region: ${config.region}`);
       } catch (error) {
-        // Check if this is a region mismatch error
+        // A region mismatch is no longer fatal: record the bucket's real region
+        // so object operations and presigned URLs sign against it.
         if (error.Code === 'AuthorizationHeaderMalformed' && error.Region) {
-          console.log(`Region mismatch detected during initialization. User specified: ${config.region}, S3 expects: ${error.Region}`);
-          console.log('Not auto-switching regions as per application settings');
-          
-          // We'll continue with the user's specified region, even though we know it might cause issues
-          // This is what the user requested - to not auto-switch regions
+          console.log(`Bucket "${config.bucket}" lives in ${error.Region} (signing region ${clientConfig.region}); using it for object operations.`);
+          bucketRegionCache.set(config.bucket, error.Region);
         } else {
           // Surface credential/auth issues early with a friendly message, but
           // don't block initialization for unrelated errors.
@@ -222,6 +270,84 @@ class AWSS3Client extends StorageClientInterface {
     }
     
     return this;
+  }
+
+  /**
+   * Discover the home region of a bucket.
+   *
+   * `followRegionRedirects` only helps requests the SDK itself sends. A
+   * presigned URL is consumed by the browser, which cannot follow S3's
+   * `301 PermanentRedirect` — it just saves the XML error body. So whenever we
+   * sign a URL (or touch an object) we must use a client whose signing region
+   * matches the bucket.
+   *
+   * Resolution order: HeadBucket (cheap, needs the same permission as
+   * listing) → the `x-amz-bucket-region` header on the failure →
+   * GetBucketLocation. Returns `null` when the region cannot be determined or
+   * when a custom S3-compatible endpoint is in use.
+   *
+   * @param {string} bucket - Bucket name
+   * @returns {Promise<string|null>} Bucket region, or null if unknown
+   */
+  async resolveBucketRegion(bucket) {
+    if (!bucket || this.usesCustomEndpoint) return null;
+    if (bucketRegionCache.has(bucket)) return bucketRegionCache.get(bucket);
+
+    let region = null;
+    try {
+      const response = await this.client.send(new HeadBucketCommand({ Bucket: bucket }));
+      region = response.BucketRegion || readBucketRegionHeader(response) || null;
+    } catch (error) {
+      // A wrong-region HeadBucket still tells us where the bucket lives, via
+      // `error.Region` (AuthorizationHeaderMalformed) or the region header
+      // (301 PermanentRedirect / 400).
+      region = error.Region || readBucketRegionHeader(error) || null;
+    }
+
+    if (!region) {
+      // Last resort: the legacy location API. Some buckets/permissions allow
+      // this when HeadBucket is denied (403 hides the region header).
+      try {
+        const response = await this.client.send(new GetBucketLocationCommand({ Bucket: bucket }));
+        region = normalizeLocationConstraint(response.LocationConstraint);
+      } catch (error) {
+        console.warn(`Could not determine region for bucket "${bucket}": ${error.message}`);
+      }
+    }
+
+    if (region) {
+      bucketRegionCache.set(bucket, region);
+      console.log(`Resolved region for bucket "${bucket}": ${region}`);
+    }
+    return region;
+  }
+
+  /**
+   * Return an S3 client whose signing region matches the bucket's home region.
+   * Falls back to the base client when the region is unknown, already correct,
+   * or irrelevant (custom endpoint).
+   * @param {string} bucket - Bucket name
+   * @returns {Promise<S3Client>} Region-correct client
+   */
+  async getClientForBucket(bucket) {
+    if (!bucket || this.usesCustomEndpoint) return this.client;
+
+    let region = null;
+    try {
+      region = await this.resolveBucketRegion(bucket);
+    } catch (error) {
+      console.warn(`Bucket region lookup failed for "${bucket}": ${error.message}`);
+    }
+    if (!region || region === this.baseRegion) return this.client;
+
+    if (!this.regionClients.has(region)) {
+      this.regionClients.set(region, new S3Client({
+        region,
+        credentials: this.credentials,
+        followRegionRedirects: true
+      }));
+    }
+    return this.regionClients.get(region);
   }
 
   /**
@@ -299,13 +425,14 @@ class AWSS3Client extends StorageClientInterface {
    */
   async listObjects(bucket, prefix = '') {
     try {
+      const client = await this.getClientForBucket(bucket);
       const command = new ListObjectsV2Command({
         Bucket: bucket,
         Prefix: prefix,
         Delimiter: '/'
       });
 
-      const response = await this.client.send(command);
+      const response = await client.send(command);
       
       // Process folders (CommonPrefixes)
       const folders = (response.CommonPrefixes || []).map(prefix => ({
@@ -330,14 +457,36 @@ class AWSS3Client extends StorageClientInterface {
     } catch (error) {
       // Check if this is a region mismatch error but don't auto-switch
       if (error.Code === 'AuthorizationHeaderMalformed' && error.Region) {
-        console.log(`Region mismatch detected. User specified: ${this.client.config.region}, S3 expects: ${error.Region}`);
-        console.log('Not auto-switching regions as per application settings');
-        
-        // Return empty results instead of switching regions
-        return { 
-          type: 'objects', 
-          data: [] 
-        };
+        console.log(`Region mismatch detected. Signing region: ${this.baseRegion}, S3 expects: ${error.Region}`);
+        // Remember the correct region so subsequent operations (including
+        // presigned downloads) sign against it, then retry once.
+        bucketRegionCache.set(bucket, error.Region);
+        try {
+          const client = await this.getClientForBucket(bucket);
+          const retry = await client.send(new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: prefix,
+            Delimiter: '/'
+          }));
+          const folders = (retry.CommonPrefixes || []).map(p => ({
+            Key: p.Prefix,
+            isFolder: true,
+            LastModified: null,
+            Size: 0
+          }));
+          const files = (retry.Contents || []).map(obj => ({
+            ...obj,
+            isFolder: false,
+            ContentType: obj.Key.split('.').pop() || 'unknown',
+            StorageClass: obj.StorageClass || 'STANDARD'
+          }));
+          return {
+            type: 'objects',
+            data: [...folders, ...files].filter(item => item.Key !== prefix)
+          };
+        } catch (retryError) {
+          throw enhanceCredentialError(retryError, this.originalConfig || {});
+        }
       }
       
       // Re-throw other errors (with credential-aware messages when applicable)
@@ -353,13 +502,14 @@ class AWSS3Client extends StorageClientInterface {
    * @returns {Promise<Object>} Result of the upload operation
    */
   async uploadObject(bucket, key, body) {
+    const client = await this.getClientForBucket(bucket);
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: body
     });
 
-    const response = await this.client.send(command);
+    const response = await client.send(command);
     return { success: true, response };
   }
 
@@ -370,12 +520,13 @@ class AWSS3Client extends StorageClientInterface {
    * @returns {Promise<Object>} Object containing the content and metadata
    */
   async getObject(bucket, key) {
+    const client = await this.getClientForBucket(bucket);
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: key
     });
 
-    return await this.client.send(command);
+    return await client.send(command);
   }
 
   /**
@@ -386,12 +537,15 @@ class AWSS3Client extends StorageClientInterface {
    * @returns {Promise<string>} Signed URL
    */
   async getSignedUrl(bucket, key, expiresIn = 3600) {
+    // Sign with a region-correct client: the browser consuming this URL cannot
+    // follow S3's region redirect.
+    const client = await this.getClientForBucket(bucket);
     const command = new GetObjectCommand({
       Bucket: bucket,
       Key: key
     });
 
-    return await getSignedUrl(this.client, command, { expiresIn });
+    return await getSignedUrl(client, command, { expiresIn });
   }
 
   /**
@@ -403,8 +557,17 @@ class AWSS3Client extends StorageClientInterface {
    */
   async getObjectUrl(bucket, key, operation = 'download') {
     console.log(`S3 getObjectUrl - Bucket: ${bucket}, Key: ${key}, Operation: ${operation}`);
-    console.log(`Using credentials for region: ${this.client.config.region}`);
-    
+
+    // A presigned URL is fetched directly by Chromium, which cannot follow the
+    // `301 PermanentRedirect` S3 returns when the signing region does not match
+    // the bucket's home region — it would save the XML error body as the file.
+    // So always sign with a client pinned to the bucket's real region.
+    const client = await this.getClientForBucket(bucket);
+    const signingRegion = typeof client.config.region === 'function'
+      ? await client.config.region()
+      : client.config.region;
+    console.log(`Signing ${operation} URL with region: ${signingRegion}`);
+
     const fileExtension = key.split('.').pop().toLowerCase();
     const isPdf = fileExtension === 'pdf';
 
@@ -422,7 +585,7 @@ class AWSS3Client extends StorageClientInterface {
       } : {})
     });
 
-    const signedUrl = await getSignedUrl(this.client, command, { expiresIn: 3600 });
+    const signedUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
     console.log(`Generated signed URL with ${operation} disposition`);
     return signedUrl;
   }
@@ -434,12 +597,13 @@ class AWSS3Client extends StorageClientInterface {
    * @returns {Promise<Object>} Result of the delete operation
    */
   async deleteObject(bucket, key) {
+    const client = await this.getClientForBucket(bucket);
     const command = new DeleteObjectCommand({
       Bucket: bucket,
       Key: key
     });
 
-    const response = await this.client.send(command);
+    const response = await client.send(command);
     return { success: true, response };
   }
 
@@ -450,6 +614,7 @@ class AWSS3Client extends StorageClientInterface {
    * @returns {Promise<Object>} Result of the batch delete operation
    */
   async deleteObjects(bucket, keys) {
+    const client = await this.getClientForBucket(bucket);
     const command = new DeleteObjectsCommand({
       Bucket: bucket,
       Delete: {
@@ -458,7 +623,7 @@ class AWSS3Client extends StorageClientInterface {
       }
     });
 
-    const response = await this.client.send(command);
+    const response = await client.send(command);
     return {
       success: true,
       deleted: response.Deleted || [],
@@ -475,16 +640,21 @@ class AWSS3Client extends StorageClientInterface {
   async createFolder(bucket, folderPath) {
     // Ensure the folder path ends with a slash
     const normalizedPath = folderPath.endsWith('/') ? folderPath : `${folderPath}/`;
-    
+
+    const client = await this.getClientForBucket(bucket);
     const command = new PutObjectCommand({
       Bucket: bucket,
       Key: normalizedPath,
       Body: ''
     });
 
-    const response = await this.client.send(command);
+    const response = await client.send(command);
     return { success: true, response };
   }
 }
 
-module.exports = AWSS3Client; 
+module.exports = AWSS3Client;
+// Exposed for tests and for callers that need to reset the shared cache.
+module.exports.bucketRegionCache = bucketRegionCache;
+module.exports.isStandardAwsEndpoint = isStandardAwsEndpoint;
+module.exports.normalizeLocationConstraint = normalizeLocationConstraint;

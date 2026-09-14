@@ -456,8 +456,8 @@
     .connection-type-aliyun-oss {
       background-color: #FF6A00;
     }
-    .connection-type-pcg {
-      background-color: #232F3E;
+    .connection-type-gcs {
+      background-color: #4285F4;
     }
     .aliyun-oss-login-form {
       background: #fff;
@@ -491,11 +491,11 @@
     .aws-s3.form-group:not(.conditional-field),
     .azure-blob.form-group:not(.conditional-field),
     .aliyun-oss.form-group:not(.conditional-field),
-    .pcg.form-group:not(.conditional-field),
+    .gcs.form-group:not(.conditional-field),
     .aws-s3:not(.conditional-field),
     .azure-blob:not(.conditional-field),
     .aliyun-oss:not(.conditional-field),
-    .pcg:not(.conditional-field) {
+    .gcs:not(.conditional-field) {
       display: none; /* Hidden by default, controlled by JavaScript */
     }
     
@@ -503,19 +503,57 @@
     #connectionForm .form-group.aws-s3,
     #connectionForm .form-group.azure-blob,
     #connectionForm .form-group.aliyun-oss,
-    #connectionForm .form-group.pcg,
+    #connectionForm .form-group.gcs,
     #connectionForm div.aws-s3,
     #connectionForm div.azure-blob,
     #connectionForm div.aliyun-oss,
-    #connectionForm div.pcg {
+    #connectionForm div.gcs {
       display: none; /* Hidden by default, controlled by JavaScript */
     }
 
     /* AWS auth-method subgroups - hidden by default, shown by JS based on
        the selected auth method (access-key vs profile). */
     #connectionForm .form-group.aws-auth-accesskey,
-    #connectionForm .form-group.aws-auth-profile {
+    #connectionForm .form-group.aws-auth-profile,
+    #connectionForm .form-group.gcs-auth-sa,
+    #connectionForm .form-group.gcs-auth-adc {
       display: none;
+    }
+
+    /* Live status line for locally discovered credentials. */
+    .credential-status {
+      font-size: 0.8rem;
+      margin-top: 6px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: #f1f3f5;
+      color: #495057;
+    }
+    .credential-status.status-ok {
+      background: #e6f4ea;
+      color: #1e7e34;
+    }
+    .credential-status.status-warn {
+      background: #fff4e5;
+      color: #9a6700;
+    }
+    .credential-status.status-error {
+      background: #fdecea;
+      color: #b02a37;
+    }
+
+    /* Inline "path + browse" row used by the GCS key file picker. */
+    .file-picker-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .file-picker-row input {
+      flex: 1;
+      min-width: 0;
+    }
+    .file-picker-row button {
+      white-space: nowrap;
     }
     
     /* When a specific type is selected, JavaScript will add corresponding styles to display these fields */
@@ -704,13 +742,14 @@
             <option value="aws-s3">AWS S3</option>
             <option value="azure-blob">Azure Blob Storage</option>
             <option value="aliyun-oss">Aliyun OSS</option>
-            <option value="pcg">PCG</option>
+            <option value="gcs">Google GCS</option>
           </select>
         </div>
         
         <!-- Common fields for all storage types -->
         <div class="form-group" id="endpointField">
-          <label class="aws-s3 pcg azure-blob">Endpoint <span class="aws-s3" style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — only for custom / S3-compatible endpoints)</span></label>
+          <label class="aws-s3 azure-blob">Endpoint <span class="aws-s3" style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — only for custom / S3-compatible endpoints)</span></label>
+          <label class="gcs">API Endpoint <span style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — only for a private/regional endpoint or an emulator)</span></label>
           <label class="required-field aliyun-oss conditional-field">External Endpoint <span style="font-weight: normal; font-style: italic; color: #6c757d;">(or provide Region below)</span></label>
           
           <!-- Aliyun OSS specific endpoint field -->
@@ -718,16 +757,20 @@
             <input type="text" name="aliyun_endpoint" id="aliyun_endpoint" placeholder="e.g., oss-cn-hangzhou.aliyuncs.com">
           </div>
           
-          <!-- Standard endpoint field for AWS, Azure, PCG -->
-          <div class="aws-s3 pcg azure-blob">
+          <!-- Standard endpoint field for AWS S3 and Azure Blob -->
+          <div class="aws-s3 azure-blob">
             <input type="text" name="endpoint" id="endpoint" placeholder="Leave blank for standard AWS S3">
+          </div>
+
+          <!-- GCS uses its own endpoint input so the AWS default logic can't touch it -->
+          <div class="gcs">
+            <input type="text" name="gcs_endpoint" id="gcs_endpoint" placeholder="Leave blank for storage.googleapis.com">
           </div>
         </div>
         <div class="form-group" id="regionField">
           <label class="aws-s3">Region <span style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — auto-detected per bucket)</span></label>
-          <label class="required-field pcg">Region</label>
           <label class="aliyun-oss conditional-field">Region <span style="font-weight: normal; font-style: italic; color: #6c757d;">(or provide Endpoint above)</span></label>
-          <div class="aws-s3 pcg">
+          <div class="aws-s3">
             <input type="text" name="region" id="region" placeholder="Example: us-east-1 (leave blank to auto-detect)">
           </div>
           <div class="aliyun-oss conditional-field">
@@ -735,7 +778,7 @@
           </div>
         </div>
         
-        <!-- AWS S3 and PCG fields -->
+        <!-- AWS S3 fields -->
         <div class="form-group aws-s3">
           <label class="required-field">Auth Method</label>
           <select name="authMethod" id="awsAuthMethod" onchange="updateAwsAuthFields()">
@@ -748,20 +791,25 @@
         </div>
         <div class="form-group aws-s3 aws-auth-profile">
           <label class="required-field">Profile Name</label>
-          <div>
-            <input type="text" name="profile" id="awsProfile" placeholder="e.g., my-sso-profile">
+          <div class="file-picker-row">
+            <select name="profile" id="awsProfile" onchange="checkAwsProfileStatus()"></select>
+            <button type="button" id="awsProfileRefresh" onclick="refreshAwsProfiles()">Refresh</button>
+            <button type="button" id="awsSsoLoginButton" onclick="awsSsoLogin()">Sign in with SSO</button>
           </div>
+          <div id="awsProfileStatus" class="credential-status">Checking local AWS profiles…</div>
           <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
-            The profile must exist in <code>~/.aws/credentials</code> or <code>~/.aws/config</code> and have a usable credential source (SSO, AssumeRole, or static keys). SSO users: run <code>aws sso login --profile &lt;name&gt;</code> in a terminal first.
+            Profiles are read from <code>~/.aws/config</code> and <code>~/.aws/credentials</code>. For an
+            IAM Identity Center (SSO) profile, "Sign in with SSO" opens your browser and refreshes the session —
+            the app then renews credentials automatically until that session expires.
           </div>
         </div>
-        <div class="form-group aws-s3 pcg aws-auth-accesskey">
+        <div class="form-group aws-s3 aws-auth-accesskey">
           <label class="required-field">Access Key</label>
           <div>
             <input type="text" name="accessKey" id="accessKey" placeholder="Access Key ID">
           </div>
         </div>
-        <div class="form-group aws-s3 pcg aws-auth-accesskey">
+        <div class="form-group aws-s3 aws-auth-accesskey">
           <label class="required-field">Secret Key</label>
           <div>
             <input type="password" name="secretKey" id="secretKey">
@@ -785,6 +833,54 @@
           <label class="required-field">AccessKeySecret</label>
           <div>
             <input type="password" name="aliyun_secretKey" id="aliyun_secretKey" placeholder="Enter AccessKeySecret">
+          </div>
+        </div>
+
+        <!-- Google Cloud Storage fields -->
+        <div class="form-group gcs">
+          <label class="required-field">Auth Method</label>
+          <select name="gcsAuthMethod" id="gcsAuthMethod" onchange="updateGcsAuthFields()">
+            <option value="service-account">Service Account JSON Key File</option>
+            <option value="adc">Application Default Credentials (gcloud)</option>
+          </select>
+          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+            Recommended: <strong>Service Account JSON Key File</strong> — it is the only option that can sign
+            preview/download URLs locally. Application Default Credentials from
+            <code>gcloud auth application-default login</code> can browse and upload, but a user account has no
+            private key, so preview and download will fail unless you add
+            <code>--impersonate-service-account=SA_EMAIL</code>.
+          </div>
+        </div>
+        <div class="form-group gcs gcs-auth-sa">
+          <label class="required-field">Service Account JSON Key File</label>
+          <div class="file-picker-row">
+            <input type="text" name="keyFilename" id="gcsKeyFilename" placeholder="Click Browse… or paste the full path to the .json key" spellcheck="false">
+            <button type="button" id="gcsBrowseKeyFile" onclick="browseGcsKeyFile()">Browse…</button>
+          </div>
+          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+            Create it in the Cloud Console: <strong>IAM &amp; Admin → Service Accounts →</strong> pick the account
+            <strong>→ Keys → Add key → Create new key → JSON</strong>. Only the file path is saved here; the private
+            key stays in the file on disk.
+          </div>
+        </div>
+        <div class="form-group gcs gcs-auth-adc">
+          <label>gcloud Sign-in Status</label>
+          <div class="file-picker-row">
+            <button type="button" id="gcsAdcCheckButton" onclick="refreshGcloudAdcStatus()">Check status</button>
+            <button type="button" id="gcsAdcLoginButton" onclick="gcloudAdcLogin()">Sign in with gcloud</button>
+          </div>
+          <div id="gcsAdcStatus" class="credential-status">Checking local gcloud credentials…</div>
+        </div>
+        <div class="form-group gcs">
+          <label>Project ID <span style="font-weight: normal; font-style: italic; color: #6c757d;">(optional — taken from the key file)</span></label>
+          <div>
+            <input type="text" name="projectId" id="gcsProjectId" placeholder="my-gcp-project">
+          </div>
+          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+            Grant the principal <code>Storage Object Viewer</code> to browse and download, or
+            <code>Storage Object Admin</code> to also upload, create folders and delete.
+            Listing <em>all</em> buckets additionally needs project-level <code>storage.buckets.list</code>;
+            without it the bucket list stays empty, so fill in <strong>Bucket</strong> below to open one directly.
           </div>
         </div>
 
@@ -899,7 +995,7 @@
       }
       
       nameDiv.innerHTML = `${activeIndicatorHTML}${connection.name}
-        <span class="connection-type-badge connection-type-${connection.type || 'aws-s3'}">${connection.type === 'aws-s3' ? 'S3' : connection.type === 'azure-blob' ? 'Azure' : connection.type === 'aliyun-oss' ? 'Aliyun' : connection.type === 'pcg' ? 'PCG' : 'S3'}</span>
+        <span class="connection-type-badge connection-type-${connection.type || 'aws-s3'}">${window.storageTypeLabel(connection.type)}</span>
       `;
       
       // Set selectConnection click handler directly

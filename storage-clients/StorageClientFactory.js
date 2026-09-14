@@ -7,15 +7,18 @@ const StorageClientInterface = require('./StorageClientInterface');
 const AWSS3Client = require('./AWSS3Client');
 const AzureBlobClient = require('./AzureBlobClient');
 const AliyunOSSClient = require('./AliyunOSSClient');
-const PCGClient = require('./PCGClient');
+const GCSClient = require('./GCSClient');
 
 // Map of connection types to client classes
 const CLIENT_TYPES = {
   'aws-s3': AWSS3Client,
   'azure-blob': AzureBlobClient,
   'aliyun-oss': AliyunOSSClient,
-  'pcg': PCGClient,
-  // Add more client types here
+  'gcs': GCSClient,
+  // Legacy alias: 'pcg' was an S3-compatible pointer at storage.googleapis.com,
+  // superseded by the native 'gcs' client. Kept registered so a connection saved
+  // by an older build still opens; the renderer migrates it to 'aws-s3' on load.
+  'pcg': AWSS3Client,
 };
 
 class StorageClientFactory {

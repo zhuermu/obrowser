@@ -28,6 +28,211 @@ function hideButtonLoading(buttonId) {
   button.querySelector('.button-spinner').style.display = 'none';
 }
 
+// Single source of truth for the short provider labels shown on connection
+// badges, aligned on the AWS "S3" style: S3 / ABS / OSS / GCS. Previously each
+// render site carried its own ternary chain, and a type missing from one of them
+// silently fell through to "S3" — which is how GCS connections ended up
+// labelled "S3".
+const STORAGE_TYPE_LABELS = {
+  'aws-s3': 'S3',
+  'azure-blob': 'ABS',
+  'aliyun-oss': 'OSS',
+  'gcs': 'GCS'
+};
+
+/**
+ * Short badge label for a storage type.
+ * @param {string} type - Connection type id
+ * @returns {string} Label such as 'S3' or 'GCS'
+ */
+function storageTypeLabel(type) {
+  const key = type || 'aws-s3';
+  // Fall back to the raw id rather than to another provider's name, so a new
+  // unlabelled type is obvious instead of silently mislabelled.
+  return STORAGE_TYPE_LABELS[key] || key;
+}
+window.storageTypeLabel = storageTypeLabel;
+
+// URI scheme each provider's own CLI uses, for the "Copy path" action. Copying
+// an s3:// path for a GCS or OSS object is simply wrong.
+const STORAGE_PATH_SCHEMES = {
+  'aws-s3': 's3',
+  'azure-blob': 'abs',
+  'aliyun-oss': 'oss',
+  'gcs': 'gs'
+};
+
+/**
+ * Build the provider-native URI for an object, e.g. gs://bucket/key.
+ * @param {string} type - Connection type id
+ * @param {string} bucket - Bucket/container name
+ * @param {string} key - Object key
+ * @returns {string} Provider-native URI
+ */
+function storageObjectUri(type, bucket, key) {
+  const scheme = STORAGE_PATH_SCHEMES[type || 'aws-s3'] || 's3';
+  return `${scheme}://${bucket}/${key}`;
+}
+window.storageObjectUri = storageObjectUri;
+
+/**
+ * Paint a credential status line.
+ * @param {string} elementId - Target element id
+ * @param {string} text - Message to show
+ * @param {string} tone - 'ok' | 'warn' | 'error' | 'neutral'
+ */
+function setCredentialStatus(elementId, text, tone = 'neutral') {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'credential-status' + (tone === 'neutral' ? '' : ` status-${tone}`);
+}
+
+// Profiles discovered from ~/.aws, kept so the SSO button can validate against
+// them and so editing a connection can re-select the saved one.
+let discoveredAwsProfiles = [];
+
+/**
+ * Populate the AWS profile dropdown from the local shared config files and
+ * report whether the selected one currently works.
+ * @param {string} [preferred] - Profile to select if present
+ */
+async function refreshAwsProfiles(preferred) {
+  const select = document.getElementById('awsProfile');
+  if (!select) return;
+  const wanted = preferred || select.value || '';
+
+  try {
+    const result = await ipcRenderer.invoke('list-aws-profiles');
+    discoveredAwsProfiles = result.profiles || [];
+    select.innerHTML = '';
+
+    if (discoveredAwsProfiles.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(no profiles found)';
+      select.appendChild(opt);
+      setCredentialStatus('awsProfileStatus',
+        `No profiles found in ${result.configPath}. Run "aws configure sso" or "aws configure" first.`, 'warn');
+      return;
+    }
+
+    discoveredAwsProfiles.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name;
+      opt.textContent = `${p.name} — ${p.sourceLabel}${p.region ? ` (${p.region})` : ''}`;
+      select.appendChild(opt);
+    });
+
+    // Keep a profile saved by an earlier session selectable even if it has since
+    // been removed from ~/.aws, so editing a connection never silently rewrites it.
+    if (wanted && !discoveredAwsProfiles.some(p => p.name === wanted)) {
+      const opt = document.createElement('option');
+      opt.value = wanted;
+      opt.textContent = `${wanted} — not found in ~/.aws`;
+      select.appendChild(opt);
+    }
+    select.value = wanted || discoveredAwsProfiles[0].name;
+
+    await checkAwsProfileStatus();
+  } catch (error) {
+    console.error('Error listing AWS profiles:', error);
+    setCredentialStatus('awsProfileStatus', `Could not read ~/.aws: ${error.message}`, 'error');
+  }
+}
+window.refreshAwsProfiles = refreshAwsProfiles;
+
+/** Ask the main process whether the selected profile can resolve credentials. */
+async function checkAwsProfileStatus() {
+  const select = document.getElementById('awsProfile');
+  const loginButton = document.getElementById('awsSsoLoginButton');
+  if (!select || !select.value) return;
+
+  setCredentialStatus('awsProfileStatus', `Checking "${select.value}"…`);
+  try {
+    const status = await ipcRenderer.invoke('check-aws-profile', select.value);
+    setCredentialStatus('awsProfileStatus', status.message,
+      status.ok ? 'ok' : status.status === 'expired' ? 'warn' : 'error');
+    // Only an SSO profile can be fixed by a browser sign-in.
+    if (loginButton) {
+      loginButton.style.display = status.source === 'sso' ? 'inline-block' : 'none';
+    }
+  } catch (error) {
+    setCredentialStatus('awsProfileStatus', `Check failed: ${error.message}`, 'error');
+  }
+}
+window.checkAwsProfileStatus = checkAwsProfileStatus;
+
+/** Run `aws sso login` for the selected profile; this opens the browser. */
+async function awsSsoLogin() {
+  const select = document.getElementById('awsProfile');
+  const button = document.getElementById('awsSsoLoginButton');
+  if (!select || !select.value) return;
+
+  if (button) button.disabled = true;
+  setCredentialStatus('awsProfileStatus',
+    'Browser opened — approve the sign-in, then this will refresh automatically…', 'warn');
+  try {
+    const result = await ipcRenderer.invoke('aws-sso-login', select.value);
+    if (result.ok) {
+      await checkAwsProfileStatus();
+    } else {
+      setCredentialStatus('awsProfileStatus', result.message, 'error');
+    }
+  } catch (error) {
+    setCredentialStatus('awsProfileStatus', `Sign-in failed: ${error.message}`, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+window.awsSsoLogin = awsSsoLogin;
+
+/** Report the local Google ADC state, including whether it can sign URLs. */
+async function refreshGcloudAdcStatus() {
+  const loginButton = document.getElementById('gcsAdcLoginButton');
+  setCredentialStatus('gcsAdcStatus', 'Checking local gcloud credentials…');
+  try {
+    const status = await ipcRenderer.invoke('check-gcloud-adc');
+    let tone = 'error';
+    if (status.live) tone = status.canSignUrls ? 'ok' : 'warn';
+    else if (status.present) tone = 'warn';
+
+    let message = status.message;
+    if (status.live && !status.canSignUrls) {
+      message += ' — browsing and upload work, but preview/download cannot sign URLs.';
+    }
+    if (!status.hasCli) {
+      message += ' (gcloud CLI not found on this machine.)';
+    }
+    setCredentialStatus('gcsAdcStatus', message, tone);
+    if (loginButton) loginButton.disabled = !status.hasCli;
+  } catch (error) {
+    setCredentialStatus('gcsAdcStatus', `Check failed: ${error.message}`, 'error');
+  }
+}
+window.refreshGcloudAdcStatus = refreshGcloudAdcStatus;
+
+/** Run `gcloud auth application-default login`; this opens the browser. */
+async function gcloudAdcLogin() {
+  const button = document.getElementById('gcsAdcLoginButton');
+  if (button) button.disabled = true;
+  setCredentialStatus('gcsAdcStatus',
+    'Browser opened — approve every permission checkbox, then this will refresh automatically…', 'warn');
+  try {
+    const result = await ipcRenderer.invoke('gcloud-adc-login');
+    if (result.ok) {
+      await refreshGcloudAdcStatus();
+    } else {
+      setCredentialStatus('gcsAdcStatus', result.message, 'error');
+    }
+  } catch (error) {
+    setCredentialStatus('gcsAdcStatus', `Sign-in failed: ${error.message}`, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+window.gcloudAdcLogin = gcloudAdcLogin;
+
 // Toggle AWS S3 auth-method sub-fields (Access Key vs AWS Profile). Must be
 // called whenever the storage type becomes 'aws-s3' or the auth method dropdown
 // value changes.
@@ -46,9 +251,18 @@ function updateAwsAuthFields() {
     el.style.display = showProfile ? 'block' : 'none';
   });
 
+  // Populate the profile list (and check its status) the first time Profile mode
+  // becomes visible, so the user picks from what exists instead of typing it.
+  if (showProfile) {
+    const select = document.getElementById('awsProfile');
+    if (select && select.options.length === 0) {
+      refreshAwsProfiles();
+    }
+  }
+
   // In AWS Profile mode, Endpoint and Region come from the profile itself
   // (~/.aws/config) or are resolved per bucket — hide them to avoid confusion.
-  // Only applies when the storage type is aws-s3; PCG/Azure/Aliyun continue
+  // Only applies when the storage type is aws-s3; Azure/Aliyun/GCS continue
   // to manage Endpoint/Region via their own rules.
   const storageTypeSel = document.getElementById('storageType');
   const storageType = storageTypeSel ? storageTypeSel.value : null;
@@ -61,6 +275,42 @@ function updateAwsAuthFields() {
 }
 window.updateAwsAuthFields = updateAwsAuthFields;
 
+// Toggle GCS auth-method sub-fields. GCS's primary credential is a single
+// service account JSON key file; ADC ("gcloud auth application-default login")
+// stores nothing in the connection profile at all.
+function updateGcsAuthFields() {
+  const authSelect = document.getElementById('gcsAuthMethod');
+  if (!authSelect) return;
+  const useKeyFile = (authSelect.value || 'service-account') === 'service-account';
+
+  document.querySelectorAll('#connectionForm .gcs-auth-sa').forEach(el => {
+    el.style.display = useKeyFile ? 'block' : 'none';
+  });
+  // The ADC block carries the sign-in status and button instead of any input.
+  document.querySelectorAll('#connectionForm .gcs-auth-adc').forEach(el => {
+    el.style.display = useKeyFile ? 'none' : 'block';
+  });
+
+  if (!useKeyFile) {
+    refreshGcloudAdcStatus();
+  }
+}
+window.updateGcsAuthFields = updateGcsAuthFields;
+
+// Open a native file picker for the GCS service account key.
+async function browseGcsKeyFile() {
+  const input = document.getElementById('gcsKeyFilename');
+  if (!input) return;
+  try {
+    const filePath = await ipcRenderer.invoke('select-credentials-file');
+    if (filePath) input.value = filePath;
+  } catch (error) {
+    console.error('Error selecting key file:', error);
+    showNotification(`Could not open the file picker: ${error.message}`, 'error');
+  }
+}
+window.browseGcsKeyFile = browseGcsKeyFile;
+
 // Add new function for cloud storage type handling
 function updateFormFields() {
   const storageType = document.getElementById('storageType').value;
@@ -72,7 +322,7 @@ function updateFormFields() {
     if (!group.classList.contains('aws-s3') && 
         !group.classList.contains('azure-blob') && 
         !group.classList.contains('aliyun-oss') && 
-        !group.classList.contains('pcg') && 
+        !group.classList.contains('gcs') && 
         !group.classList.contains('conditional-field')) {
       group.style.display = 'block';
     } else {
@@ -101,7 +351,7 @@ function updateFormFields() {
         div.style.display = 'block';
       });
     } else {
-      // AWS S3, PCG and Azure Blob all use the standard endpoint field
+      // AWS S3, Azure Blob and GCS each use their own endpoint input
       endpointField.querySelectorAll(`div.${storageType}`).forEach(div => {
         div.style.display = 'block';
       });
@@ -117,9 +367,6 @@ function updateFormFields() {
         case 'azure-blob':
           endpoint.value = 'https://<account-name>.blob.core.windows.net';
           break;
-        case 'pcg':
-          endpoint.value = 'https://storage.googleapis.com';
-          break;
       }
     }
   }
@@ -129,12 +376,15 @@ function updateFormFields() {
   if (storageType === 'aws-s3') {
     updateAwsAuthFields();
   }
+  if (storageType === 'gcs') {
+    updateGcsAuthFields();
+  }
   
   // Special handling for regionField
   const regionField = document.getElementById('regionField');
   if (regionField) {
-    // Only show region field for AWS S3, PCG and Aliyun OSS
-    if (['aws-s3', 'pcg', 'aliyun-oss'].includes(storageType)) {
+    // Only show region field for AWS S3 and Aliyun OSS
+    if (['aws-s3', 'aliyun-oss'].includes(storageType)) {
       regionField.style.display = 'block';
       
       // Hide all divs inside region field
@@ -168,7 +418,7 @@ function updateFormFields() {
     if (!label.classList.contains('aws-s3') && 
         !label.classList.contains('azure-blob') && 
         !label.classList.contains('aliyun-oss') && 
-        !label.classList.contains('pcg') && 
+        !label.classList.contains('gcs') && 
         !label.classList.contains('conditional-field')) {
       label.style.display = 'block';
     }
@@ -216,6 +466,17 @@ async function loadConnections() {
         if (!conn.type) {
           conn.type = 'aws-s3'; // Default to AWS S3
           needsUpdate = true;
+        }
+
+        // Migrate the retired 'pcg' type. It was only ever an S3-compatible
+        // client pointed at a custom endpoint (Google's XML API), so the AWS S3
+        // client with the same endpoint/keys is an exact behavioural match.
+        // Native Google Cloud Storage now has its own 'gcs' type.
+        if (conn.type === 'pcg') {
+          conn.type = 'aws-s3';
+          conn.authMethod = conn.authMethod || 'access-key';
+          needsUpdate = true;
+          console.log(`Migrated legacy PCG connection "${conn.name}" to aws-s3`);
         }
         
         // Ensure connections have an ID
@@ -305,14 +566,8 @@ async function loadConnections() {
             
             // Add connection type badge
             const connType = conn.type || 'aws-s3'; // Default to aws-s3 for backward compatibility
-            const typeMap = {
-              'aws-s3': 'AWS S3',
-              'azure-blob': 'Azure Blob',
-              'aliyun-oss': 'Aliyun OSS',
-              'pcg': 'PCG'
-            };
             
-            nameDiv.innerHTML = `${conn.name} <span class="connection-type-badge connection-type-${connType}">${typeMap[connType] || connType}</span>`;
+            nameDiv.innerHTML = `${conn.name} <span class="connection-type-badge connection-type-${connType}">${storageTypeLabel(connType)}</span>`;
             nameDiv.onclick = () => selectConnection(conn);
             
             const actionsDiv = document.createElement('div');
@@ -378,13 +633,7 @@ async function loadConnections() {
       if (!connectionStatus.dataset.ownedBySelect) {
         connectionStatus.style.display = 'flex';
 
-        const storageTypeMap = {
-          'aws-s3': 'AWS S3',
-          'azure-blob': 'Azure Blob',
-          'aliyun-oss': 'Aliyun OSS',
-          'pcg': 'PCG'
-        };
-        const storageTypeName = storageTypeMap[currentConnection.type] || currentConnection.type || 'AWS S3';
+        const storageTypeName = storageTypeLabel(currentConnection.type);
         connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
       }
 
@@ -550,25 +799,21 @@ window.renderer_editConnection = function(connection) {
       }
       if (accountName) accountName.value = connection.accountName || '';
       if (accountKey) accountKey.value = connection.accountKey || '';
-    } else if (storageType === 'pcg') {
-      // For PCG (Google Cloud Storage)
-      const endpoint = document.getElementById('endpoint');
-      const region = document.getElementById('region');
-      const accessKey = document.getElementById('accessKey');
-      const secretKey = document.getElementById('secretKey');
-      
-      if (endpoint) {
-        endpoint.value = connection.endpoint || 'https://storage.googleapis.com';
-        console.log('Setting PCG endpoint field:', connection.endpoint);
-        endpoint.style.display = 'block';
+    } else if (storageType === 'gcs') {
+      // Google Cloud Storage: a single service account JSON key file (or ADC).
+      const gcsEndpoint = document.getElementById('gcs_endpoint');
+      const gcsAuthMethodSel = document.getElementById('gcsAuthMethod');
+      const gcsKeyFile = document.getElementById('gcsKeyFilename');
+      const gcsProjectId = document.getElementById('gcsProjectId');
+
+      if (gcsEndpoint) gcsEndpoint.value = connection.endpoint || '';
+      if (gcsAuthMethodSel) {
+        gcsAuthMethodSel.value = connection.authMethod
+          || (connection.keyFilename ? 'service-account' : 'adc');
+        updateGcsAuthFields();
       }
-      if (region) {
-        region.value = connection.region || 'us-central1';
-        console.log('Setting PCG region field:', connection.region);
-        region.style.display = 'block';
-      }
-      if (accessKey) accessKey.value = connection.accessKey || '';
-      if (secretKey) secretKey.value = connection.secretKey || '';
+      if (gcsKeyFile) gcsKeyFile.value = connection.keyFilename || '';
+      if (gcsProjectId) gcsProjectId.value = connection.projectId || '';
     } else {
       // AWS S3
       const endpoint = document.getElementById('endpoint');
@@ -582,6 +827,11 @@ window.renderer_editConnection = function(connection) {
       // Default to 'access-key' for legacy connections that predate authMethod.
       const method = connection.authMethod || 'access-key';
       if (authMethodEl) authMethodEl.value = method;
+      // The profile field is a dropdown of locally discovered profiles now, so
+      // fill the list before selecting the saved value.
+      if (method === 'profile') {
+        refreshAwsProfiles(connection.profile || '');
+      }
 
       if (endpoint) {
         // For profile mode we don't force a default endpoint: letting the SDK
@@ -602,7 +852,9 @@ window.renderer_editConnection = function(connection) {
         console.log('Setting AWS region field:', connection.region);
         region.style.display = 'block';
       }
-      if (profileEl) profileEl.value = connection.profile || '';
+      // profileEl is a <select> populated asynchronously by refreshAwsProfiles
+      // above, which also selects `connection.profile`; assigning .value here
+      // would be a no-op before the options exist.
       if (accessKey) accessKey.value = connection.accessKey || '';
       if (secretKey) secretKey.value = connection.secretKey || '';
       if (sessionToken) sessionToken.value = connection.sessionToken || '';
@@ -629,31 +881,38 @@ window.renderer_editConnection = function(connection) {
         if (!field.classList.contains('aws-s3') && 
             !field.classList.contains('azure-blob') && 
             !field.classList.contains('aliyun-oss') && 
-            !field.classList.contains('pcg') && 
+            !field.classList.contains('gcs') && 
             !field.classList.contains('conditional-field')) {
           field.style.display = 'block';
         }
-        // Display fields for current storage type
-        else if (field.classList.contains(storageType)) {
+        // Display fields for current storage type — but never auth-method
+        // subgroups, whose visibility depends on the selected auth method and is
+        // applied further down. Showing them here is what left the GCS service
+        // account key file visible while Auth Method was set to ADC.
+        else if (field.classList.contains(storageType)
+                 && !field.classList.contains('aws-auth-accesskey')
+                 && !field.classList.contains('aws-auth-profile')
+                 && !field.classList.contains('gcs-auth-sa')
+                 && !field.classList.contains('gcs-auth-adc')) {
           field.style.display = 'block';
         }
       });
       
-      // For AWS S3 and PCG, always show endpoint and region fields
-      if (storageType === 'aws-s3' || storageType === 'pcg') {
+      // For AWS S3, always show endpoint and region fields
+      if (storageType === 'aws-s3') {
         const endpointField = document.getElementById('endpointField');
         const regionField = document.getElementById('regionField');
         
         if (endpointField) {
           endpointField.style.display = 'block';
-          endpointField.querySelectorAll(`div.${storageType}, div.aws-s3, div.pcg`).forEach(div => {
+          endpointField.querySelectorAll(`div.${storageType}, div.aws-s3`).forEach(div => {
             div.style.display = 'block';
           });
         }
         
         if (regionField) {
           regionField.style.display = 'block';
-          regionField.querySelectorAll(`div.${storageType}, div.aws-s3, div.pcg`).forEach(div => {
+          regionField.querySelectorAll(`div.${storageType}, div.aws-s3`).forEach(div => {
             div.style.display = 'block';
           });
         }
@@ -664,11 +923,15 @@ window.renderer_editConnection = function(connection) {
         input.style.display = 'block';
       });
 
-      // Re-apply AWS auth-method visibility last so Profile mode correctly
-      // hides Access Key/Secret/Session Token (and Endpoint/Region) even after
-      // the generic storage-type loop above set them all to display: block.
+      // Re-apply auth-method visibility last so the sub-fields match the
+      // selected method even after the generic storage-type loop above ran.
+      // AWS: Profile mode hides Access Key/Secret/Session Token (and
+      // Endpoint/Region). GCS: ADC mode hides the service account key file.
       if (storageType === 'aws-s3' && typeof updateAwsAuthFields === 'function') {
         updateAwsAuthFields();
+      }
+      if (storageType === 'gcs' && typeof updateGcsAuthFields === 'function') {
+        updateGcsAuthFields();
       }
     }
     
@@ -797,6 +1060,23 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
           }
           break;
         
+        case 'gcs':
+          // The key file is required only for the service-account method; the
+          // ADC method deliberately takes no credential input at all. Without
+          // this branch the field carried a "required" marker that nothing
+          // enforced, so an empty service-account connection could be saved and
+          // then failed later at connect time.
+          const gcsAuthEl = document.getElementById('gcsAuthMethod');
+          const gcsAuthValue = gcsAuthEl ? gcsAuthEl.value : 'service-account';
+          if (gcsAuthValue === 'service-account') {
+            const gcsKeyEl = document.getElementById('gcsKeyFilename');
+            if (!gcsKeyEl || !gcsKeyEl.value.trim()) {
+              formIsValid = false;
+              errorMessage = 'Please select the service account JSON key file, or switch Auth Method to Application Default Credentials';
+            }
+          }
+          break;
+
         case 'aliyun-oss':
           // Get required elements
           const aliyunEndpoint = document.getElementById('aliyun_endpoint');
@@ -820,28 +1100,6 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
           }
           break;
         
-        case 'pcg':
-          // Get required elements
-          const pcgEndpoint = document.getElementById('endpoint');
-          const pcgRegion = document.getElementById('region');
-          const pcgAccessKey = document.getElementById('accessKey');
-          const pcgSecretKey = document.getElementById('secretKey');
-          
-          // Validate regardless of visibility
-          if (pcgEndpoint && !pcgEndpoint.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Endpoint';
-          } else if (pcgRegion && !pcgRegion.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Region';
-          } else if (pcgAccessKey && !pcgAccessKey.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Access Key';
-          } else if (pcgSecretKey && !pcgSecretKey.value) {
-            formIsValid = false;
-            errorMessage = 'Please enter Secret Key';
-          }
-          break;
       }
     }
     
@@ -969,18 +1227,25 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
         }
         break;
         
-      case 'pcg':
-        const pcgEndpoint = document.getElementById('endpoint');
-        const pcgRegion = document.getElementById('region');
-        const pcgAccessKey = document.getElementById('accessKey');
-        const pcgSecretKey = document.getElementById('secretKey');
-        
-        // Ensure PCG has a proper endpoint
-        if (pcgEndpoint) connection.endpoint = pcgEndpoint.value || 'https://storage.googleapis.com';
-        if (pcgRegion) connection.region = pcgRegion.value || 'us-central1';
-        if (pcgAccessKey) connection.accessKey = pcgAccessKey.value;
-        if (pcgSecretKey) connection.secretKey = pcgSecretKey.value;
+      case 'gcs':
+        const gcsEndpoint = document.getElementById('gcs_endpoint');
+        const gcsAuthMethodSel = document.getElementById('gcsAuthMethod');
+        const gcsKeyFileEl = document.getElementById('gcsKeyFilename');
+        const gcsProjectIdEl = document.getElementById('gcsProjectId');
+        const gcsMethod = gcsAuthMethodSel ? gcsAuthMethodSel.value : 'service-account';
+
+        connection.authMethod = gcsMethod;
+        connection.endpoint = gcsEndpoint ? (gcsEndpoint.value.trim() || '') : '';
+        connection.projectId = gcsProjectIdEl ? gcsProjectIdEl.value.trim() : '';
+        // Persist only the path to the key file; the private key itself stays
+        // on disk instead of being copied into the connections config.
+        connection.keyFilename = gcsMethod === 'service-account' && gcsKeyFileEl
+          ? gcsKeyFileEl.value.trim()
+          : '';
+        // GCS addresses buckets globally — no region needed.
+        connection.region = '';
         break;
+
     }
     
     // Update bucket and prefix
@@ -1059,13 +1324,7 @@ async function selectConnection(connection) {
         connectionStatus.style.display = 'flex';
         connectionStatus.dataset.ownedBySelect = '1';
         // Based on different storage types, display different messages
-        const storageTypeMap = {
-          'aws-s3': 'AWS S3',
-          'azure-blob': 'Azure Blob',
-          'aliyun-oss': 'Aliyun OSS',
-          'pcg': 'PCG'
-        };
-        const storageTypeName = storageTypeMap[currentConnection.type] || currentConnection.type || 'AWS S3';
+        const storageTypeName = storageTypeLabel(currentConnection.type);
         connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
 
         // For AWS S3, append a region switcher so the user can change region
@@ -1169,13 +1428,7 @@ async function selectConnection(connection) {
     try {
       await loadFiles();
       // Based on different storage types, display different messages
-      const storageTypeMap = {
-        'aws-s3': 'AWS S3',
-        'azure-blob': 'Azure Blob',
-        'aliyun-oss': 'Aliyun OSS',
-        'pcg': 'PCG'
-      };
-      const storageTypeName = storageTypeMap[currentConnection.type] || currentConnection.type || 'AWS S3';
+      const storageTypeName = storageTypeLabel(currentConnection.type);
       showNotification(`Connected to "${currentConnection.name}" (${storageTypeName})`, 'info');
     } catch (error) {
       console.error('Error loading files:', error);
@@ -1469,11 +1722,7 @@ async function loadFiles() {
         // Extract region information (if any)
         const region = bucket.Location || bucket.Region || '-';
         // Extract storage type information
-        const storageType = currentConnection ? 
-          (currentConnection.type === 'aws-s3' ? 'S3' : 
-           currentConnection.type === 'azure-blob' ? 'Azure' : 
-           currentConnection.type === 'aliyun-oss' ? 'Aliyun' : 
-           currentConnection.type === 'pcg' ? 'PCG' : 'Unknown') : 'Unknown';
+        const storageType = currentConnection ? storageTypeLabel(currentConnection.type) : 'Unknown';
         
         details.innerHTML = `
           <span class="file-name">${bucket.Name || 'Unknown'}</span>
@@ -1741,8 +1990,8 @@ async function loadFiles() {
           copyPathButton.onclick = async (e) => {
             e.stopPropagation();
             try {
-              // 构建 S3 路径格式: s3://bucket-name/path/to/folder/
-              const s3Path = `s3://${currentBucket}/${item.Key}`;
+              // 构建各云厂商各自的原生路径, 例如 s3:// / gs:// / oss://
+              const s3Path = storageObjectUri(currentConnection && currentConnection.type, currentBucket, item.Key);
               
               // 复制到剪贴板
               await navigator.clipboard.writeText(s3Path);
@@ -1842,8 +2091,8 @@ async function loadFiles() {
           copyPathButton.onclick = async (e) => {
             e.stopPropagation();
             try {
-              // 构建 S3 路径格式: s3://bucket-name/path/to/file
-              const s3Path = `s3://${currentBucket}/${item.Key}`;
+              // 构建各云厂商各自的原生路径, 例如 s3:// / gs:// / oss://
+              const s3Path = storageObjectUri(currentConnection && currentConnection.type, currentBucket, item.Key);
               
               // 复制到剪贴板
               await navigator.clipboard.writeText(s3Path);
@@ -1868,15 +2117,10 @@ async function loadFiles() {
               
               // 使用getObjectUrl获取下载链接
               const downloadUrl = await getObjectUrl(currentConnection.id, currentBucket, item.Key, 'download');
-              
-              // 创建一个临时链接元素并触发下载
-              const link = document.createElement('a');
-              link.href = downloadUrl;
-              link.download = item.Key.split('/').pop(); // 设置文件名
-              document.body.appendChild(link);
-              link.click();
-              document.body.removeChild(link);
-              
+
+              // 校验链接后再触发下载，避免把 S3 的 XML 错误当成文件保存
+              await startVerifiedDownload(downloadUrl, item.Key.split('/').pop());
+
               showNotification(`File "${fileName}" downloaded successfully`, 'success');
             } catch (error) {
               console.error('Error downloading file:', error);
@@ -2133,6 +2377,30 @@ async function uploadFile() {
 }
 
 /**
+ * Start a browser download for a signed URL, but verify the URL works first.
+ *
+ * Chromium writes whatever the server returns to disk, so an unverified URL can
+ * silently produce an XML error document named "video.mp4". The main process
+ * probes the URL (it can bypass CORS) and reports a readable error instead.
+ *
+ * @param {string} url - Signed URL to download
+ * @param {string} filename - Suggested filename
+ */
+async function startVerifiedDownload(url, filename) {
+  const check = await ipcRenderer.invoke('verify-object-url', url);
+  if (!check.ok) {
+    throw new Error(check.message || 'The download link is not valid.');
+  }
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+/**
  * Get a signed URL for an object with specific operation type
  * @param {string} connectionId - The ID of the connection
  * @param {string} bucket - The bucket/container name
@@ -2180,15 +2448,10 @@ async function downloadSelected() {
         
         // 使用getObjectUrl获取下载链接
         const downloadUrl = await getObjectUrl(currentConnection.id, currentBucket, key, 'download');
-        
-        // 创建一个临时链接元素并触发下载
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = key.split('/').pop(); // 设置文件名
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        
+
+        // 校验链接后再触发下载
+        await startVerifiedDownload(downloadUrl, key.split('/').pop());
+
         downloadCount++;
       } catch (error) {
         console.error('Error downloading file:', error);
@@ -2204,7 +2467,7 @@ async function downloadSelected() {
       }
     } else {
       const message = `Downloaded ${downloadCount} file(s)` +
-        (errors.length > 0 ? `, but ${errors.length} file(s) failed to download.` : '');
+        (errors.length > 0 ? `, but ${errors.length} failed: ${errors[0].error}` : '');
       showNotification(message, 'warning');
       console.error('Download errors:', errors);
     }
@@ -2604,7 +2867,7 @@ async function renderPreview(file, result) {
           </div>
           <h3 style="margin-bottom: 20px; word-break: break-all;">${file.Key.split('/').pop()}</h3>
           <p>This file type cannot be previewed directly.</p>
-          <a href="${result.content}" download="${file.Key.split('/').pop()}" class="button" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #0066cc; color: white; border-radius: 4px; text-decoration: none; font-size: 16px;">
+          <a href="#" onclick="downloadFile('${encodeURIComponent(file.Key)}'); return false;" class="button" style="display: inline-block; margin-top: 20px; padding: 12px 24px; background: #0066cc; color: white; border-radius: 4px; text-decoration: none; font-size: 16px;">
             <i class="fa-solid fa-download"></i> Download File
           </a>
         </div>
@@ -2685,15 +2948,11 @@ async function downloadFile(encodedKey) {
     
     // 使用明确的下载操作获取URL
     const downloadUrl = await getObjectUrl(currentConnection.id, currentBucket, key, 'download');
-    
-    // 创建一个临时链接元素并触发下载
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = key.split('/').pop(); // 设置文件名
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
+
+    // 预览窗口可能已打开很久，链接可能失效或跨区域被重定向；先校验再下载，
+    // 否则浏览器会把 S3 返回的 XML 错误文档保存成 mp4/pdf 等文件。
+    await startVerifiedDownload(downloadUrl, key.split('/').pop());
+
     showNotification(`File "${key.split('/').pop()}" download started`, 'success');
   } catch (error) {
     console.error('Error downloading file:', error);
@@ -2763,10 +3022,6 @@ function initializeDirectEventListeners() {
             case 'azure-blob':
               endpointInput.value = 'https://<account-name>.blob.core.windows.net';
               console.log('Direct handler: Set Azure Blob default endpoint');
-              break;
-            case 'pcg':
-              endpointInput.value = 'https://storage.googleapis.com';
-              console.log('Direct handler: Set PCG default endpoint');
               break;
           }
         }

@@ -2,6 +2,16 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const SimpleStore = require('./simple-store');
 const fs = require('fs');
+const { spawn } = require('child_process');
+const { fromIni } = require('@aws-sdk/credential-providers');
+const { verifyDownloadUrl } = require('./download-verifier');
+const { parseResolvedProxy, chooseProxy, applyNetworkConfig } = require('./network-config');
+const {
+  listAwsProfiles,
+  findExecutable,
+  describeAdcCredential,
+  isKnownProfileName
+} = require('./credential-discovery');
 
 // Import storage client factory
 const StorageClientFactory = require('./storage-clients/StorageClientFactory');
@@ -107,7 +117,38 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
+/**
+ * Make the Node-side cloud SDKs usable on networks that require a proxy.
+ *
+ * Launched from Finder an app inherits no shell environment, so HTTPS_PROXY is
+ * unset and SDK requests go out directly — which times out where the provider is
+ * only reachable through a proxy. Chromium already knows the system proxy, so we
+ * ask it and publish the result for the SDKs. See network-config.js for the
+ * accompanying TLS note.
+ */
+async function configureNetworking() {
+  let systemProxy = null;
+  try {
+    const { session } = require('electron');
+    // Resolve against a real provider host: PAC scripts can answer per-URL.
+    const resolved = await session.defaultSession.resolveProxy('https://storage.googleapis.com');
+    systemProxy = parseResolvedProxy(resolved);
+    console.log(`System proxy resolution: ${resolved} -> ${systemProxy || 'direct'}`);
+  } catch (error) {
+    console.warn(`Could not resolve the system proxy: ${error.message}`);
+  }
+
+  const { proxyUrl, source } = chooseProxy(process.env, systemProxy);
+  const applied = applyNetworkConfig({ proxyUrl });
+  if (applied.proxy) {
+    console.log(`Using proxy ${applied.proxy} (from ${source}); TLS capped at ${applied.tlsMaxVersion}`);
+  } else {
+    console.log('No proxy configured; connecting directly.');
+  }
+}
+
+app.whenReady().then(async () => {
+  await configureNetworking();
   createWindow();
 
   app.on('activate', function () {
@@ -209,6 +250,21 @@ ipcMain.handle('show-open-dialog', async () => {
     properties: ['openFile', 'multiSelections']
   });
   return result.filePaths;
+});
+
+// Pick a credentials file (currently the GCS service account JSON key). Only the
+// path is returned and stored; the key material stays in the file on disk.
+ipcMain.handle('select-credentials-file', async () => {
+  const result = await dialog.showOpenDialog({
+    title: 'Select service account JSON key file',
+    properties: ['openFile'],
+    filters: [
+      { name: 'JSON key file', extensions: ['json'] },
+      { name: 'All files', extensions: ['*'] }
+    ]
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
 });
 
 // Storage Operations
@@ -315,6 +371,242 @@ ipcMain.handle('get-object-url', async (event, connectionId, bucket, key, operat
     console.error(`Error getting ${operation} URL:`, error);
     throw error;
   }
+});
+
+// Verify that a signed URL actually serves the object before the renderer hands
+// it to Chromium's downloader. Chromium saves whatever body it receives, so a
+// failed request (region redirect, expired signature, deleted object) would end
+// up on disk as an XML error document named like the real file. Runs in the main
+// process because a renderer `fetch` from a file:// page is blocked by CORS.
+ipcMain.handle('verify-object-url', async (event, url) => {
+  const result = await verifyDownloadUrl(url);
+  if (!result.ok) {
+    console.error(`Download URL verification failed: ${result.message}`);
+  }
+  return result;
+});
+
+// ---------------------------------------------------------------------------
+// Local credential discovery / sign-in helpers
+//
+// AWS SSO profiles and Google ADC already exist on the machine, so the dialog
+// offers what is there, reports whether it is still valid, and can launch the
+// browser sign-in when it has expired.
+// ---------------------------------------------------------------------------
+
+/** Read a text file, returning '' when it does not exist. */
+function readTextIfPresent(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf-8');
+  } catch (error) {
+    return '';
+  }
+}
+
+/** Absolute paths of the shared AWS config files, honouring the CLI's env vars. */
+function awsConfigPaths() {
+  const home = app.getPath('home');
+  return {
+    config: process.env.AWS_CONFIG_FILE || path.join(home, '.aws', 'config'),
+    credentials: process.env.AWS_SHARED_CREDENTIALS_FILE || path.join(home, '.aws', 'credentials')
+  };
+}
+
+function isExecutablePath(candidate) {
+  try {
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return fs.statSync(candidate).isFile();
+  } catch (error) {
+    return false;
+  }
+}
+
+/** Locate a CLI and build an env with its directory on PATH for child processes. */
+function resolveCli(name) {
+  const binary = findExecutable(name, isExecutablePath, {
+    ...process.env,
+    HOME: app.getPath('home')
+  });
+  if (!binary) return null;
+  const env = {
+    ...process.env,
+    HOME: app.getPath('home'),
+    PATH: `${path.dirname(binary)}:${process.env.PATH || '/usr/bin:/bin'}`
+  };
+  return { binary, env };
+}
+
+/**
+ * Run a CLI sign-in command that opens a browser, without a shell.
+ * Arguments are passed as an array so nothing is word-split or interpolated.
+ */
+function runLoginCommand(cli, args, timeoutMs = 5 * 60 * 1000) {
+  return new Promise((resolve) => {
+    const child = spawn(cli.binary, args, {
+      env: cli.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false
+    });
+
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      resolve({ ok: false, message: 'Sign-in timed out after 5 minutes.' });
+    }, timeoutMs);
+
+    child.stdout.on('data', d => { stdout += d.toString(); });
+    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.on('error', err => {
+      clearTimeout(timer);
+      resolve({ ok: false, message: `Could not start ${path.basename(cli.binary)}: ${err.message}` });
+    });
+    child.on('close', code => {
+      clearTimeout(timer);
+      const output = `${stdout}\n${stderr}`.trim();
+      resolve(code === 0
+        ? { ok: true, message: 'Sign-in completed.' }
+        : { ok: false, message: output.split('\n').filter(Boolean).slice(-3).join(' ') || `Exited with code ${code}` });
+    });
+  });
+}
+
+// List the AWS profiles found in the shared config files.
+ipcMain.handle('list-aws-profiles', async () => {
+  const paths = awsConfigPaths();
+  const profiles = listAwsProfiles({
+    configText: readTextIfPresent(paths.config),
+    credentialsText: readTextIfPresent(paths.credentials)
+  });
+  return {
+    profiles,
+    configPath: paths.config,
+    hasCli: !!resolveCli('aws')
+  };
+});
+
+// Resolve a profile's credentials to find out whether it currently works. For an
+// SSO profile this is exactly what reports an expired token.
+ipcMain.handle('check-aws-profile', async (event, profileName) => {
+  const paths = awsConfigPaths();
+  const profiles = listAwsProfiles({
+    configText: readTextIfPresent(paths.config),
+    credentialsText: readTextIfPresent(paths.credentials)
+  });
+  const profile = profiles.find(p => p.name === profileName);
+  if (!profile) {
+    return { ok: false, status: 'missing', message: `Profile "${profileName}" is not in ${paths.config}` };
+  }
+
+  try {
+    const credentials = await fromIni({ profile: profileName })();
+    const expiration = credentials.expiration ? new Date(credentials.expiration) : null;
+    return {
+      ok: true,
+      status: 'valid',
+      source: profile.source,
+      expiresAt: expiration ? expiration.toISOString() : null,
+      message: expiration
+        ? `Signed in — credentials valid until ${expiration.toLocaleString()}`
+        : 'Credentials resolved'
+    };
+  } catch (error) {
+    const name = error && (error.name || error.Code);
+    const msg = error && error.message ? error.message : String(error);
+    const expired =
+      name === 'SSOTokenProviderFailure' ||
+      /token.*(expired|invalid|not\s*found)/i.test(msg) ||
+      /sso.*(login|session)/i.test(msg);
+    return {
+      ok: false,
+      status: expired ? 'expired' : 'error',
+      source: profile.source,
+      canSsoLogin: profile.source === 'sso',
+      message: expired
+        ? 'Session expired — sign in again to refresh it.'
+        : msg.split('\n')[0]
+    };
+  }
+});
+
+// `aws sso login` opens the browser and waits for the device-code approval.
+ipcMain.handle('aws-sso-login', async (event, profileName) => {
+  const paths = awsConfigPaths();
+  const profiles = listAwsProfiles({
+    configText: readTextIfPresent(paths.config),
+    credentialsText: readTextIfPresent(paths.credentials)
+  });
+  // Only ever pass a name we discovered ourselves, so no extra CLI flags can be
+  // smuggled in through the field.
+  if (!isKnownProfileName(profileName, profiles)) {
+    return { ok: false, message: 'Unknown profile — refresh the list and try again.' };
+  }
+  const cli = resolveCli('aws');
+  if (!cli) {
+    return { ok: false, message: 'AWS CLI not found. Install it (brew install awscli) and try again.' };
+  }
+  return runLoginCommand(cli, ['sso', 'login', '--profile', profileName]);
+});
+
+// Report the state of Google Application Default Credentials.
+ipcMain.handle('check-gcloud-adc', async () => {
+  const adcPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
+    || path.join(app.getPath('home'), '.config', 'gcloud', 'application_default_credentials.json');
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(fs.readFileSync(adcPath, 'utf-8'));
+  } catch (error) {
+    parsed = null;
+  }
+  const described = describeAdcCredential(parsed);
+  const hasCli = !!resolveCli('gcloud');
+
+  if (!described.present) {
+    return { ...described, adcPath, hasCli, live: false, message: 'Not signed in with gcloud.' };
+  }
+
+  // A file on disk only proves a refresh token exists; ask for an access token
+  // to confirm it still works.
+  try {
+    const { GoogleAuth } = require('google-auth-library');
+    const auth = new GoogleAuth({
+      keyFile: adcPath,
+      scopes: ['https://www.googleapis.com/auth/devstorage.read_write']
+    });
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    const live = !!(token && token.token);
+    return {
+      ...described,
+      adcPath,
+      hasCli,
+      live,
+      message: live
+        ? `Signed in — ${described.description}`
+        : 'Credentials found but no access token could be obtained; sign in again.'
+    };
+  } catch (error) {
+    return {
+      ...described,
+      adcPath,
+      hasCli,
+      live: false,
+      message: `Credentials found but not usable: ${error.message.split('\n')[0]}`
+    };
+  }
+});
+
+// `gcloud auth application-default login` opens the browser.
+ipcMain.handle('gcloud-adc-login', async () => {
+  const cli = resolveCli('gcloud');
+  if (!cli) {
+    return {
+      ok: false,
+      message: 'gcloud not found. Install it (brew install --cask gcloud-cli) and try again.'
+    };
+  }
+  return runLoginCommand(cli, ['auth', 'application-default', 'login', '--quiet']);
 });
 
 ipcMain.handle('upload-object', async (event, connectionId, bucket, key, filePath) => {

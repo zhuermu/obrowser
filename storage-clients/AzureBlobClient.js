@@ -64,7 +64,7 @@ class AzureBlobClient extends StorageClientInterface {
   }
 
   /**
-   * List blobs in a container with optional prefix
+   * List blobs in a container one level deep, mirroring S3's delimiter listing.
    * @param {string} container - Container name
    * @param {string} prefix - Optional prefix (folder path)
    * @returns {Promise<Object>} Object containing folders and files
@@ -73,67 +73,55 @@ class AzureBlobClient extends StorageClientInterface {
     const containerClient = this.client.getContainerClient(container);
     const folders = new Map();
     const files = [];
-    
+
     // Normalize prefix to ensure consistent handling
     const normalizedPrefix = prefix ? (prefix.endsWith('/') ? prefix : `${prefix}/`) : '';
-    
-    // Azure doesn't have built-in hierarchy, so we simulate it
-    const options = {
-      prefix: normalizedPrefix
-    };
-    
-    // Use async iterator to get all blobs
-    for await (const blob of containerClient.listBlobsFlat(options)) {
-      const blobName = blob.name;
-      
-      // Skip the exact prefix itself
-      if (blobName === normalizedPrefix) continue;
-      
-      // Check if this is a "folder" (Azure doesn't have real folders)
-      if (blobName.endsWith('/')) {
-        // This is a placeholder blob representing a folder
-        const folderName = blobName.substring(normalizedPrefix.length);
-        if (!folderName) continue; // Skip if this is the current folder
-        
-        folders.set(blobName, {
-          Key: blobName,
+
+    // `listBlobsByHierarchy` is Azure's equivalent of S3's `Delimiter`: the
+    // service rolls everything below the next '/' into a prefix entry. Doing
+    // this server-side is both cheaper than enumerating every blob and correct
+    // for folders whose only contents are nested several levels down — the
+    // previous manual grouping missed those entirely, so a container holding
+    // just `a/b/c.txt` looked empty.
+    for await (const item of containerClient.listBlobsByHierarchy('/', { prefix: normalizedPrefix })) {
+      if (item.kind === 'prefix') {
+        folders.set(item.name, {
+          Key: item.name,
           isFolder: true,
-          LastModified: blob.properties.lastModified,
+          LastModified: null,
           Size: 0
         });
-      } else {
-        // Extract folder path from the blob name
-        const blobPath = blobName.substring(normalizedPrefix.length);
-        const pathParts = blobPath.split('/');
-        
-        if (pathParts.length > 1) {
-          // This blob is inside a subfolder
-          const folderPath = normalizedPrefix + pathParts.slice(0, -1).join('/') + '/';
-          
-          // Only add the immediate child folder
-          if (!folders.has(folderPath) && pathParts.length === 2) {
-            folders.set(folderPath, {
-              Key: folderPath,
-              isFolder: true,
-              LastModified: null,
-              Size: 0
-            });
-          }
-        } else {
-          // This is a regular blob in the current folder
-          files.push({
-            Key: blobName,
-            isFolder: false,
-            LastModified: blob.properties.lastModified,
-            Size: blob.properties.contentLength,
-            ContentType: blob.properties.contentType || 'application/octet-stream',
-            StorageClass: 'Standard',
-            ETag: blob.properties.etag
+        continue;
+      }
+
+      // Skip the placeholder blob representing the folder we are listing.
+      if (item.name === normalizedPrefix) continue;
+
+      if (item.name.endsWith('/')) {
+        // Placeholder blob for an empty folder. Azure normally reports it as a
+        // prefix; keep this as a fallback so it is never shown as a 0-byte file.
+        if (!folders.has(item.name)) {
+          folders.set(item.name, {
+            Key: item.name,
+            isFolder: true,
+            LastModified: item.properties.lastModified,
+            Size: 0
           });
         }
+        continue;
       }
+
+      files.push({
+        Key: item.name,
+        isFolder: false,
+        LastModified: item.properties.lastModified,
+        Size: item.properties.contentLength,
+        ContentType: item.properties.contentType || 'application/octet-stream',
+        StorageClass: item.properties.accessTier || 'Standard',
+        ETag: item.properties.etag
+      });
     }
-    
+
     return {
       type: 'objects',
       data: [...folders.values(), ...files]

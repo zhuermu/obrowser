@@ -2,3 +2,5 @@ node_modules
 dist/
 .DS_Store
 .env
+# Local Azure Storage emulator data (npm run emulator:azure)
+.azurite/

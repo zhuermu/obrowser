@@ -11,7 +11,7 @@ UI:
 - **AWS S3**: Amazon Simple Storage Service
 - **Azure Blob Storage**: Microsoft Azure's object storage solution
 - **Aliyun OSS**: Alibaba Cloud Object Storage Service
-- **PCG (ParallelCluster)**: AWS ParallelCluster compatible storage
+- **Google Cloud Storage**: via the native JSON API, authenticated with a service account JSON key file or Application Default Credentials
 
 ## Features
 
@@ -61,7 +61,7 @@ npm run build
 2. Select the storage type
 3. Enter the connection details:
    - **Connection Name**: A user-friendly name for the connection
-   - **Storage Type**: AWS S3, Azure Blob, Aliyun OSS, or PCG
+   - **Storage Type**: AWS S3, Azure Blob, Aliyun OSS, or Google Cloud Storage
    - **Endpoint**: The service endpoint URL
    - **Region**: The service region
    - **Authentication Details**: Credentials required for the selected storage type
@@ -82,9 +82,19 @@ npm run build
 - **Access Key**: Aliyun access key ID
 - **Secret Key**: Aliyun access key secret
 
-#### PCG (ParallelCluster)
-- **Access Key**: PCG access key ID
-- **Secret Key**: PCG secret access key
+#### Google Cloud Storage
+Google's primary credential is a single JSON key file, not an access-key/secret pair.
+
+- **Auth Method**: `Service Account JSON Key File` or `Application Default Credentials`
+- **Service Account JSON Key File**: path to a key created under IAM & Admin → Service Accounts → Keys → Add key → JSON. Only the path is stored in the connection profile; the private key stays in the file on disk.
+- **Project ID** (optional): defaults to the project in the key file
+- **API Endpoint** (optional): only for a private/regional endpoint or an emulator
+
+Required roles: `Storage Object Viewer` to browse and download, `Storage Object Admin` to upload, create folders, or delete. Listing buckets additionally needs `storage.buckets.list` (e.g. `Storage Admin` at the project level).
+
+For Application Default Credentials, run `gcloud auth application-default login` first. Note that user-account ADC has no private key, so signed URLs (used for preview and download) fall back to the IAM SignBlob API and need the `iam.serviceAccounts.signBlob` permission — a service account key avoids that.
+
+If you specifically want an access-key/secret pair for GCS, those are "HMAC keys" for the S3-compatible XML API, created under Cloud Storage → Settings → Interoperability. GCP **API keys** (`AIza…`) cannot be used: they identify no principal, so IAM cannot authorize them for private buckets.
 
 ### File Operations
 

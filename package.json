@@ -10,7 +10,9 @@
     "build:mac": "dotenv -e .env -- electron-builder --mac",
     "build:mac:no-notarize": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
-    "test": "jest"
+    "test": "jest",
+    "emulator:azure": "azurite-blob --silent --location .azurite --blobHost 127.0.0.1 --blobPort 10000",
+    "emulator:gcs": "docker run --rm -p 4443:4443 fsouza/fake-gcs-server:latest -scheme http -port 4443 -public-host 127.0.0.1:4443"
   },
   "build": {
     "appId": "com.zhuermu.obrowser.app",
@@ -143,10 +145,12 @@
     "@aws-sdk/credential-providers": "^3.1043.0",
     "@aws-sdk/s3-request-presigner": "^3.732.0",
     "@azure/storage-blob": "^12.14.0",
+    "@google-cloud/storage": "7.22.0",
     "ali-oss": "^6.17.1",
     "vue": "^3.3.0"
   },
   "devDependencies": {
+    "azurite": "3.37.0",
     "dotenv-cli": "^11.0.0",
     "electron": "^28.0.0",
     "electron-builder": "^24.0.0",
