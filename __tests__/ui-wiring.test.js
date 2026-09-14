@@ -12,6 +12,8 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf-8');
+const css = fs.readFileSync(path.join(ROOT, 'ui.css'), 'utf-8');
+const workspace = fs.readFileSync(path.join(ROOT, 'workspace-ui.js'), 'utf-8');
 const renderer = fs.readFileSync(path.join(ROOT, 'renderer.js'), 'utf-8');
 const StorageClientFactory = require('../storage-clients/StorageClientFactory');
 
@@ -44,7 +46,7 @@ describe('storage type wiring', () => {
 
   test('every type has a badge colour so the label stays readable', () => {
     for (const type of types) {
-      expect(html).toContain(`.connection-type-${type} {`);
+      expect(css).toContain(`.connection-type-${type} {`);
     }
   });
 
@@ -66,7 +68,7 @@ describe('storage type wiring', () => {
     expect(html).not.toMatch(/type === 'aws-s3' \? 'S3'/);
     // Both render paths must go through the shared helper.
     expect(renderer).toContain('window.storageTypeLabel = storageTypeLabel;');
-    expect(html).toContain('window.storageTypeLabel(connection.type)');
+    expect(workspace).toContain('window.storageTypeLabel(connection.type)');
   });
 
   test('Copy Path uses each provider native URI scheme, not always s3://', () => {
@@ -91,7 +93,7 @@ describe('storage type wiring', () => {
   test('provider-specific fields are hidden by default in CSS', () => {
     for (const type of types) {
       // Without this rule the fields of every provider show at once.
-      expect(html).toContain(`#connectionForm .form-group.${type},`);
+      expect(css).toContain(`#connectionForm .form-group.${type},`);
     }
   });
 
@@ -128,7 +130,7 @@ describe("local credential guidance", () => {
   });
 
   test('the ADC block is hidden by default and toggled with the auth method', () => {
-    expect(html).toContain('#connectionForm .form-group.gcs-auth-adc');
+    expect(css).toContain('#connectionForm .form-group.gcs-auth-adc');
     expect(renderer).toContain("document.querySelectorAll('#connectionForm .gcs-auth-adc')");
     // It must not be force-shown by the generic edit loop either.
     expect(renderer).toContain("!field.classList.contains('gcs-auth-adc')");

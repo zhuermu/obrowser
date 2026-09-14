@@ -1,740 +1,78 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OBrowser</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <style>
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background-color: #ffffff;
-      color: #1d1d1f;
-    }
-    .container {
-      display: flex;
-      height: 100vh;
-    }
-    .sidebar {
-      width: 250px;
-      background: #f5f5f7;
-      border-right: 1px solid #d2d2d7;
-      padding: 1rem;
-      display: flex;
-      flex-direction: column;
-    }
-    .main-content {
-      flex: 1;
-      padding: 1rem;
-      display: flex;
-      flex-direction: column;
-      position: relative;
-    }
-    .connection-list {
-      margin-bottom: 1rem;
-    }
-    .connection-item {
-      padding: 0.5rem;
-      margin-bottom: 0.5rem;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-      transition: all 0.2s;
-    }
-    .connection-item:hover {
-      background: #e8e8ed;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 5px rgba(0,0,0,0.08);
-    }
-    .connection-name {
-      cursor: pointer;
-      flex: 1;
-    }
-    .connection-actions {
-      display: flex;
-      gap: 0.5rem;
-    }
-    .file-list {
-      flex: 1;
-      border: 1px solid #d2d2d7;
-      border-radius: 10px;
-      overflow: auto;
-      position: relative;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .file-item {
-      padding: 0.5rem;
-      border-bottom: 1px solid #d2d2d7;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      cursor: default; /* Default cursor style */
-    }
-    .file-item:hover {
-      background: #f8f9fa;
-    }
-    .file-item:not(.folder):hover {
-      cursor: default;
-    }
-    .file-item.folder {
-      cursor: pointer;
-      font-weight: 500;
-    }
-    .file-item.folder .file-details {
-      cursor: pointer;
-    }
-    .file-item.folder:hover {
-      background: #e8e8ed;
-    }
-    .file-checkbox {
-      width: 20px;
-    }
-    .file-icon {
-      width: 24px;
-      text-align: center;
-    }
-    .file-details {
-      flex: 1;
-      display: grid;
-      grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr;
-      gap: 1rem;
-      align-items: center;
-    }
-    .file-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .toolbar {
-      padding: 1rem 0;
-      display: flex;
-      gap: 0.75rem;
-      align-items: center;
-      margin-bottom: 0.5rem;
-    }
-    .path-breadcrumb {
-      flex: 1;
-      padding: 0.5rem 0.75rem;
-      background: #f7f7f9;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      min-height: 20px;
-      box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
-    }
-    .path-navigation {
-      margin-bottom: 0.75rem;
-      display: flex;
-      align-items: center;
-      padding: 0.25rem 0;
-    }
-    .path-segment {
-      cursor: pointer;
-      color: #0066cc;
-      display: inline-flex;
-      align-items: center;
-      padding: 0.25rem 0.5rem;
-      margin: 0 2px;
-      border-radius: 4px;
-      transition: all 0.2s;
-    }
-    .path-segment:hover {
-      text-decoration: underline;
-      background-color: rgba(0, 102, 204, 0.1);
-    }
-    .path-segment.current {
-      font-weight: 500;
-      color: #1d1d1f;
-    }
-    button {
-      padding: 0.5rem 1rem;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
-      background: white;
-      cursor: pointer;
-      position: relative;
-      transition: all 0.2s;
-      font-size: 0.9rem;
-      font-weight: 500;
-    }
-    button:hover {
-      background: #f5f5f7;
-      transform: translateY(-1px);
-    }
-    button:disabled {
-      cursor: not-allowed;
-      opacity: 0.6;
-    }
-    .modal {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.3);
-      z-index: 1000;
-      justify-content: center;
-      align-items: center;
-      backdrop-filter: blur(5px);
-    }
-    .modal-content {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: white;
-      padding: 1.5rem;
-      border-radius: 12px;
-      min-width: 400px;
-      width: 450px;
-      max-width: 95%;
-      max-height: 80vh;
-      overflow-y: auto;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-    }
-    .form-group {
-      margin-bottom: 0.75rem;
-    }
-    .form-group label {
-      display: block;
-      margin-bottom: 0.25rem;
-      font-size: 14px;
-      color: #1d1d1f;
-    }
-    .form-group input, .form-group select {
-      width: 100%;
-      padding: 0.6rem;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      transition: all 0.2s;
-    }
-    .form-group input:focus, .form-group select:focus {
-      outline: none;
-      border-color: #0066cc;
-      box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.15);
-    }
-    .form-buttons {
-      display: flex;
-      justify-content: flex-end;
-      gap: 10px;
-      margin-top: 1rem;
-      position: sticky;
-      bottom: 0;
-      background: white;
-      padding-top: 8px;
-      border-top: 1px solid #f8f9fa;
-    }
-    .required-field::after {
-      content: '*';
-      color: #dc3545;
-      margin-left: 4px;
-    }
-    .text-action-button {
-      padding: 0.25rem 0.5rem;
-      font-size: 0.875rem;
-      color: #6c757d;
-      border: none;
-      background: none;
-    }
-    .text-action-button:hover {
-      color: #0d6efd;
-      background: none;
-    }
-    .action-button {
-      padding: 0.25rem 0.5rem;
-      font-size: 0.875rem;
-      color: #6c757d;
-      border: none;
-      background: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-    }
-    .action-button:hover {
-      color: #0066cc;
-      background: rgba(0, 102, 204, 0.1);
-    }
-    .preview-modal {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.8);
-      z-index: 1000;
-    }
-    .preview-content {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: white;
-      padding: 1rem;
-      border-radius: 4px;
-      width: 95%;
-      height: 95%;
-      overflow: auto;
-    }
-    .preview-image {
-      max-width: 100%;
-      max-height: 80vh;
-    }
-    .preview-text {
-      white-space: pre-wrap;
-      font-family: monospace;
-    }
-    .preview-close {
-      position: absolute;
-      top: 10px;
-      right: 10px;
-      cursor: pointer;
-      background: rgba(0, 0, 0, 0.6);
-      color: white;
-      font-size: 24px;
-      width: 40px;
-      height: 40px;
-      border-radius: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1001;
-      transition: background-color 0.2s;
-    }
-    .preview-close:hover {
-      background: rgba(0, 0, 0, 0.8);
-    }
-    .modal-buttons {
-      display: flex;
-      gap: 1rem;
-      justify-content: flex-end;
-      margin-top: 1.5rem;
-    }
-    .modal h2 {
-      margin-top: 0;
-      color: #dc3545;
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-    }
-    #folderDeleteConfirm {
-      width: 100%;
-      padding: 0.5rem;
-      margin: 1rem 0;
-      border: 1px solid #dee2e6;
-      border-radius: 4px;
-      font-size: 1rem;
-    }
-    #folderDeleteConfirm:focus {
-      outline: none;
-      border-color: #0d6efd;
-      box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-    }
-    .column-header {
-      font-weight: 500;
-      padding: 0.5rem;
-      background: #f8f9fa;
-      border-bottom: 2px solid #dee2e6;
-      display: grid;
-      grid-template-columns: 20px 24px 2fr 1fr 1fr 1fr 1fr 1fr;
-      gap: 1rem;
-      align-items: center;
-    }
-    
-    /* 可排序列样式 */
-    .sortable-column {
-      cursor: pointer;
-      user-select: none;
-      position: relative;
-      padding-right: 20px;
-    }
-    
-    .sortable-column:hover {
-      background-color: rgba(0, 102, 204, 0.1);
-    }
-    
-    .sortable-column i {
-      position: absolute;
-      right: 5px;
-      top: 50%;
-      transform: translateY(-50%);
-      opacity: 0.5;
-    }
-    
-    .sortable-column i.fa-sort-up,
-    .sortable-column i.fa-sort-down {
-      opacity: 1;
-      color: #0066cc;
-    }
-    
-    /* 最近上传文件高亮样式 */
-    .recently-uploaded {
-      background-color: rgba(255, 248, 230, 0.7);
-      position: relative;
-      animation: fadeHighlight 5s ease-out;
-    }
-    
-    @keyframes fadeHighlight {
-      from { background-color: rgba(255, 248, 230, 1); }
-      to { background-color: rgba(255, 248, 230, 0.7); }
-    }
-    
-    .new-badge {
-      position: absolute;
-      top: 5px;
-      right: 5px;
-      background-color: #ff6b6b;
-      color: white;
-      font-size: 0.7rem;
-      font-weight: bold;
-      padding: 2px 6px;
-      border-radius: 10px;
-      z-index: 1;
-    }
-    .loading-overlay {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(255, 255, 255, 0.8);
-      z-index: 100;
-      justify-content: center;
-      align-items: center;
-    }
-    .loading-spinner {
-      width: 40px;
-      height: 40px;
-      border: 4px solid #f3f3f3;
-      border-top: 4px solid #3498db;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    .loading-text {
-      margin-left: 1rem;
-      font-weight: 500;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-    .button-spinner {
-      display: none;
-      width: 16px;
-      height: 16px;
-      border: 2px solid #f3f3f3;
-      border-top: 2px solid #3498db;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      position: absolute;
-      right: 0.5rem;
-      top: 50%;
-      transform: translateY(-50%);
-    }
-    .connection-type-badge {
-      display: inline-block;
-      font-size: 0.75rem;
-      font-weight: 600;
-      border-radius: 10px;
-      padding: 2px 8px;
-      margin-left: 6px;
-      color: white;
-    }
-    .connection-type-aws-s3 {
-      background-color: #FF9900;
-    }
-    .connection-type-azure-blob {
-      background-color: #0078D4;
-    }
-    .connection-type-aliyun-oss {
-      background-color: #FF6A00;
-    }
-    .connection-type-gcs {
-      background-color: #4285F4;
-    }
-    .aliyun-oss-login-form {
-      background: #fff;
-      border-radius: 4px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    }
-    .aliyun-oss-field input {
-      padding: 8px 12px;
-      border-radius: 4px;
-      border: 1px solid #d9d9d9;
-    }
-    .aliyun-oss-field input:focus {
-      border-color: #40a9ff;
-      box-shadow: 0 0 0 2px rgba(24,144,255,0.2);
-      outline: none;
-    }
-    .aliyun-oss-field label {
-      font-size: 14px;
-      color: #333;
-    }
-    .conditional-field {
-      display: none;
-    }
-    
-    /* Override for visibility control */
-    .form-group:not(.conditional-field) {
-      display: block;
-    }
-    
-    /* Add more specific styles for form elements */
-    .aws-s3.form-group:not(.conditional-field),
-    .azure-blob.form-group:not(.conditional-field),
-    .aliyun-oss.form-group:not(.conditional-field),
-    .gcs.form-group:not(.conditional-field),
-    .aws-s3:not(.conditional-field),
-    .azure-blob:not(.conditional-field),
-    .aliyun-oss:not(.conditional-field),
-    .gcs:not(.conditional-field) {
-      display: none; /* Hidden by default, controlled by JavaScript */
-    }
-    
-    /* Storage type field control - hide all specific fields by default */
-    #connectionForm .form-group.aws-s3,
-    #connectionForm .form-group.azure-blob,
-    #connectionForm .form-group.aliyun-oss,
-    #connectionForm .form-group.gcs,
-    #connectionForm div.aws-s3,
-    #connectionForm div.azure-blob,
-    #connectionForm div.aliyun-oss,
-    #connectionForm div.gcs {
-      display: none; /* Hidden by default, controlled by JavaScript */
-    }
-
-    /* AWS auth-method subgroups - hidden by default, shown by JS based on
-       the selected auth method (access-key vs profile). */
-    #connectionForm .form-group.aws-auth-accesskey,
-    #connectionForm .form-group.aws-auth-profile,
-    #connectionForm .form-group.gcs-auth-sa,
-    #connectionForm .form-group.gcs-auth-adc {
-      display: none;
-    }
-
-    /* Live status line for locally discovered credentials. */
-    .credential-status {
-      font-size: 0.8rem;
-      margin-top: 6px;
-      padding: 6px 10px;
-      border-radius: 6px;
-      background: #f1f3f5;
-      color: #495057;
-    }
-    .credential-status.status-ok {
-      background: #e6f4ea;
-      color: #1e7e34;
-    }
-    .credential-status.status-warn {
-      background: #fff4e5;
-      color: #9a6700;
-    }
-    .credential-status.status-error {
-      background: #fdecea;
-      color: #b02a37;
-    }
-
-    /* Inline "path + browse" row used by the GCS key file picker. */
-    .file-picker-row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    .file-picker-row input {
-      flex: 1;
-      min-width: 0;
-    }
-    .file-picker-row button {
-      white-space: nowrap;
-    }
-    
-    /* When a specific type is selected, JavaScript will add corresponding styles to display these fields */
-    
-    .icon-button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-    }
-    .icon-button i {
-      font-size: 1rem;
-    }
-    
-    /* Bucket specific styles */
-    .bucket-item {
-      border-left: 3px solid #0078D4;
-      cursor: pointer;
-    }
-    .bucket-item .file-icon {
-      color: #0078D4;
-    }
-    .bucket-item:hover {
-      background-color: rgba(0, 120, 212, 0.1);
-    }
-    .bucket-item .file-details {
-      cursor: pointer;
-    }
-    
-    /* File path styles */
-    .file-path {
-      font-size: 0.8em;
-      color: #6c757d;
-      margin-left: 5px;
-      font-style: italic;
-      max-width: 150px;
-      display: inline-block;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      vertical-align: middle;
-    }
-    
-    /* File path column styles */
-    .file-path-column {
-      font-size: 0.9em;
-      color: #6c757d;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 100%;
-    }
-    
-    /* Connection item selected styles */
-    .connection-item.active {
-      background-color: rgba(0, 102, 204, 0.1);
-      border-left: 3px solid #0066cc;
-      font-weight: 500;
-    }
-    
-    .connection-item.active .connection-name {
-      color: #0066cc;
-    }
-    
-    /* Action button container styles */
-    .file-actions, .bucket-actions {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    
-    /* Button hover hint styles */
-    [title] {
-      position: relative;
-    }
-    
-    /* File item hover shows action buttons */
-    .file-item:hover .action-button {
-      opacity: 1;
-    }
-    
-    .action-button {
-      opacity: 0.7;
-      transition: opacity 0.2s;
-    }
-    
-    /* 移除了排序控件样式，保留列标题排序功能 */
-    
-    /* Improved search box styles */
-    .toolbar input[type="text"] {
-      flex: 0 1 300px;
-      padding: 0.6rem 1rem;
-      border: 1px solid #d2d2d7;
-      border-radius: 8px;
-      font-size: 0.9rem;
-      transition: all 0.2s;
-      background-color: #f5f5f7;
-      max-width: 300px;
-      margin-left: auto;
-      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>');
-      background-repeat: no-repeat;
-      background-position: 10px center;
-      padding-left: 35px;
-    }
-    
-    .toolbar input[type="text"]:focus {
-      outline: none;
-      border-color: #0066cc;
-      box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.15);
-      background-color: white;
-    }
-    .bucket-details, .folder .file-details {
-      cursor: pointer;
-    }
-    /* Explicitly use default cursor on hover (non-clickable items) */
-    .file-item:not(.folder):not([style*="cursor: pointer"]):hover {
-      cursor: default;
-    }
-  </style>
+  <link rel="stylesheet" href="ui.css">
+  <script src="ui-icons.js" defer></script>
 </head>
 <body>
   <div class="container">
-    <div class="sidebar">
-      <h2>Connections</h2>
-      <div class="connection-list" id="connectionList"></div>
-      <button onclick="showNewConnectionModal()" class="icon-button"><i class="fa-solid fa-plus"></i> Add Connection</button>
-    </div>
-    <div class="main-content">
-      <div id="connectionStatus" style="display: none; padding: 0.5rem 0.75rem; background: #f0f7ff; border-radius: 8px; margin-bottom: 0.5rem; font-size: 0.9rem; align-items: center; gap: 0.75rem; flex-wrap: wrap;"></div>
-      <div class="toolbar">
-        <button onclick="navigateUp()" id="upButton" class="icon-button" title="Up one level">
-          <i class="fa-solid fa-arrow-up"></i> Up
-        </button>
-        <button onclick="uploadFile()" id="uploadButton" class="icon-button">
-          <i class="fa-solid fa-upload"></i> Upload
-          <div class="button-spinner"></div>
-        </button>
-        <button onclick="createFolder()" id="newFolderButton" class="icon-button">
-          <i class="fa-solid fa-folder"></i> New Folder
-          <div class="button-spinner"></div>
-        </button>
-        <button onclick="downloadSelected()" id="downloadButton" class="icon-button">
-          <i class="fa-solid fa-download"></i> Download
-          <div class="button-spinner"></div>
-        </button>
-        <button onclick="deleteSelected()" id="deleteButton" class="icon-button">
-          <i class="fa-solid fa-trash"></i> Delete
-          <div class="button-spinner"></div>
-        </button>
-        <input type="text" placeholder="Search files..." oninput="filterFiles(this.value)" id="searchInput">
+    <aside class="sidebar" aria-label="Storage connections">
+      <div class="brand"><img class="brand-mark" src="obrowser.svg" alt=""><span>OBrowser</span><span class="brand-caption">Workspace</span></div>
+      <button class="command-launch" onclick="openCommandPalette()" title="Open command menu">
+        <i class="fa-solid fa-search"></i><span>Find anything…</span><kbd data-shortcut="K">⌘ K</kbd>
+      </button>
+      <div class="sidebar-section"><h2>Connections</h2><span id="connectionCount" class="quiet-count">0</span>
+        <button class="action-button" onclick="showNewConnectionModal()" title="New connection" aria-label="New connection"><i class="fa-solid fa-plus"></i></button>
       </div>
-      <div class="path-navigation">
-        <div class="path-breadcrumb" id="pathBreadcrumb"></div>
+      <nav class="connection-list" id="connectionList" aria-label="Connections"></nav>
+      <button onclick="showNewConnectionModal()" class="add-connection"><i class="fa-solid fa-plus"></i> Add connection</button>
+      <div class="sidebar-footer">
+        <div class="workspace-label"><span class="workspace-dot"></span> Local workspace</div>
+        <div class="sidebar-utilities">
+          <button id="themeButton" class="text-action-button" onclick="cycleTheme()" title="Change appearance"><i class="fa-solid fa-desktop"></i><span id="themeLabel">System</span></button>
+          <button class="action-button" onclick="openShortcuts()" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"><i class="fa-solid fa-keyboard"></i></button>
+        </div>
       </div>
-      <div class="column-header">
-        <div></div>
-        <div></div>
-        <div>Name</div>
-        <div>Size</div>
-        <div>Modified</div>
-        <div>Type</div>
-        <div>Storage Class</div>
-        <div>Owner</div>
-        <div>Actions</div>
-      </div>
-      <div class="file-list" id="fileList"></div>
-      <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-spinner"></div>
-        <span class="loading-text">Loading...</span>
-      </div>
-    </div>
+    </aside>
+    <main class="main-content">
+      <header class="navigation-bar">
+        <button onclick="navigateUp()" id="upButton" class="action-button" title="Up one level (Alt + ←)" aria-label="Up one level" disabled><i class="fa-solid fa-arrow-left"></i></button>
+        <nav class="path-breadcrumb" id="pathBreadcrumb" aria-label="Storage path"><span class="breadcrumb-placeholder">Workspace</span></nav>
+        <button class="action-button" onclick="openCommandPalette()" title="Commands" aria-label="Open command menu"><i class="fa-solid fa-command"></i></button>
+      </header>
+      <section class="workspace-content">
+        <div class="workspace-heading">
+          <div class="heading-copy"><div class="eyebrow" id="workspaceEyebrow">YOUR WORKSPACE</div><h1 id="workspaceTitle">Storage, simplified.</h1><p id="workspaceDescription">A little less friction. A lot more focus.</p></div>
+          <div id="connectionStatus" style="display: none;"></div>
+        </div>
+        <div class="toolbar" id="browserToolbar" hidden>
+          <div class="view-label"><i class="fa-solid fa-list"></i><span id="viewLabel">Objects</span><span class="quiet-count" id="objectCount">0</span></div>
+          <div class="search-field"><i class="fa-solid fa-search"></i><input type="search" placeholder="Filter this folder…" aria-label="Filter current folder" oninput="filterFiles(this.value)" id="searchInput"><kbd data-shortcut="F">⌘ F</kbd></div>
+          <button onclick="loadFiles()" id="refreshButton" class="action-button" title="Refresh" aria-label="Refresh"><i class="fa-solid fa-rotate"></i></button>
+          <span class="toolbar-divider"></span>
+          <button onclick="createFolder()" id="newFolderButton" class="icon-button"><i class="fa-solid fa-folder-plus"></i><span>New folder</span><span class="button-spinner"></span></button>
+          <button onclick="uploadFile()" id="uploadButton" class="icon-button primary-button"><i class="fa-solid fa-upload"></i> Upload<span class="button-spinner"></span></button>
+          <div class="selection-bar" id="selectionBar" role="group" aria-label="Selected item actions" hidden>
+            <span id="selectionCount" role="status">0 selected</span>
+            <button onclick="clearSelection()" class="text-action-button">Clear</button>
+            <div class="selection-actions">
+              <button onclick="downloadSelected()" id="downloadButton" class="icon-button"><i class="fa-solid fa-download"></i> Download<span class="button-spinner"></span></button>
+              <button onclick="deleteSelected()" id="deleteButton" class="icon-button danger-button"><i class="fa-solid fa-trash"></i> Delete<span class="button-spinner"></span></button>
+            </div>
+          </div>
+        </div>
+        <div class="browser-surface" role="grid" aria-label="Storage items" aria-multiselectable="true">
+          <div class="column-header" role="row" hidden></div>
+          <div class="file-list" id="fileList" role="rowgroup" tabindex="-1"></div>
+        </div>
+      </section>
+      <footer class="status-bar"><span id="statusSummary" role="status">Ready when you are</span><span id="statusHint">One workspace. All your clouds.</span></footer>
+      <div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite"><div class="loading-pill"><span class="loading-spinner"></span><span class="loading-text">Loading…</span></div></div>
+    </main>
   </div>
 
-  <div class="modal" id="connectionModal">
+  <div class="modal" id="connectionModal" role="dialog" aria-modal="true" aria-labelledby="connectionModalTitle">
     <div class="modal-content">
-      <h2 id="connectionModalTitle">New Connection</h2>
+      <div class="dialog-heading"><div><div class="eyebrow">CONNECT YOUR CLOUD</div><h2 id="connectionModalTitle">New connection</h2></div><button type="button" class="action-button" onclick="hideConnectionModal()" aria-label="Close connection dialog"><i class="fa-solid fa-xmark"></i></button></div>
+      <p class="dialog-description">Your files stay in your cloud. Bring them into focus here.</p>
       <form id="connectionForm">
         <input type="hidden" name="id">
         <div class="form-group">
           <label class="required-field">Connection Name</label>
-          <input type="text" name="name" required>
+          <input type="text" id="connectionName" name="name" placeholder="e.g. Production storage" required autocomplete="off">
         </div>
         <div class="form-group">
           <label class="required-field">Storage Type</label>
@@ -786,7 +124,7 @@
             <option value="profile">AWS Shared Profile (~/.aws)</option>
           </select>
           <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
-            Tip: "AWS Shared Profile" is more secure — credentials are managed by aws-cli and support SSO, AssumeRole, MFA, and auto-refresh.
+            Use an AWS profile for SSO and automatically refreshed credentials.
           </div>
         </div>
         <div class="form-group aws-s3 aws-auth-profile">
@@ -844,11 +182,8 @@
             <option value="adc">Application Default Credentials (gcloud)</option>
           </select>
           <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
-            Recommended: <strong>Service Account JSON Key File</strong> — it is the only option that can sign
-            preview/download URLs locally. Application Default Credentials from
-            <code>gcloud auth application-default login</code> can browse and upload, but a user account has no
-            private key, so preview and download will fail unless you add
-            <code>--impersonate-service-account=SA_EMAIL</code>.
+            Service account keys support local URL signing. User ADC needs service-account
+            impersonation to preview and download files.
           </div>
         </div>
         <div class="form-group gcs gcs-auth-sa">
@@ -857,11 +192,11 @@
             <input type="text" name="keyFilename" id="gcsKeyFilename" placeholder="Click Browse… or paste the full path to the .json key" spellcheck="false">
             <button type="button" id="gcsBrowseKeyFile" onclick="browseGcsKeyFile()">Browse…</button>
           </div>
-          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+          <details class="form-help"><summary>Where do I find this key?</summary><div>
             Create it in the Cloud Console: <strong>IAM &amp; Admin → Service Accounts →</strong> pick the account
             <strong>→ Keys → Add key → Create new key → JSON</strong>. Only the file path is saved here; the private
             key stays in the file on disk.
-          </div>
+          </div></details>
         </div>
         <div class="form-group gcs gcs-auth-adc">
           <label>gcloud Sign-in Status</label>
@@ -876,12 +211,12 @@
           <div>
             <input type="text" name="projectId" id="gcsProjectId" placeholder="my-gcp-project">
           </div>
-          <div style="font-size: 0.8rem; color: #6c757d; margin-top: 4px;">
+          <details class="form-help"><summary>Required storage permissions</summary><div>
             Grant the principal <code>Storage Object Viewer</code> to browse and download, or
             <code>Storage Object Admin</code> to also upload, create folders and delete.
             Listing <em>all</em> buckets additionally needs project-level <code>storage.buckets.list</code>;
             without it the bucket list stays empty, so fill in <strong>Bucket</strong> below to open one directly.
-          </div>
+          </div></details>
         </div>
 
         <!-- Azure Blob Storage specific fields -->
@@ -913,8 +248,8 @@
         </div>
         
         <div class="form-buttons">
-          <button type="submit" id="saveConnectionButton">
-            Save
+          <button type="submit" id="saveConnectionButton" class="primary-button">
+            Save connection
             <div class="button-spinner"></div>
           </button>
           <button type="button" onclick="hideConnectionModal()">Cancel</button>
@@ -923,15 +258,15 @@
     </div>
   </div>
 
-  <div class="modal" id="folderModal">
+  <div class="modal" id="folderModal" role="dialog" aria-modal="true" aria-labelledby="folderModalTitle">
     <div class="modal-content">
-      <h2>Create New Folder</h2>
+      <div class="dialog-heading"><h2 id="folderModalTitle">New folder</h2><button class="action-button" onclick="hideFolderModal()" aria-label="Close folder dialog"><i class="fa-solid fa-xmark"></i></button></div><p class="dialog-description">Create a folder in the current location.</p>
       <form id="folderForm">
         <div class="form-group">
-          <label class="required-field">Folder Name</label>
-          <input type="text" name="folderName" required>
+          <label class="required-field" for="folderName">Folder name</label>
+          <input type="text" id="folderName" name="folderName" required autocomplete="off">
         </div>
-        <button type="submit" id="createFolderButton">
+        <button type="submit" id="createFolderButton" class="primary-button">
           Create
           <div class="button-spinner"></div>
         </button>
@@ -940,251 +275,25 @@
     </div>
   </div>
 
-  <div class="preview-modal" id="previewModal">
-    <div class="preview-close" onclick="hidePreview()" title="Close Preview">✕</div>
-    <div class="preview-content" id="previewContent"></div>
+  <div class="preview-modal" id="previewModal" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
+    <div class="preview-shell"><div class="preview-heading"><i class="fa-solid fa-file"></i><span id="previewTitle">File preview</span><button class="action-button" onclick="hidePreview()" aria-label="Close preview" title="Close preview (Esc)"><i class="fa-solid fa-xmark"></i></button></div><div class="preview-content" id="previewContent"></div></div>
   </div>
-
-  <!-- Add a notification component -->
-  <div id="notification" style="display: none; position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 4px; color: white; z-index: 9999; box-shadow: 0 4px 8px rgba(0,0,0,0.2); transition: opacity 0.3s;">
-    <span id="notificationMessage"></span>
-    <button onclick="hideNotification()" style="background: none; border: none; color: white; margin-left: 10px; cursor: pointer; font-weight: bold;">×</button>
+  <div class="modal command-modal" id="commandModal" role="dialog" aria-modal="true" aria-label="Command menu">
+    <div class="command-panel"><div class="command-search"><i class="fa-solid fa-search"></i><input id="commandInput" placeholder="Search commands and connections…" aria-label="Search commands" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="commandResults" aria-autocomplete="list"><button class="text-action-button" onclick="closeCommandPalette()" aria-label="Close command menu"><kbd>esc</kbd></button></div><div id="commandResults" role="listbox" aria-label="Commands"></div><div class="command-footer"><span><kbd>↑</kbd><kbd>↓</kbd> to navigate</span><span><kbd>↵</kbd> to select</span></div></div>
   </div>
-
+  <div class="modal" id="shortcutsModal" role="dialog" aria-modal="true" aria-labelledby="shortcutsTitle">
+    <div class="modal-content shortcuts-content"><div class="dialog-heading"><h2 id="shortcutsTitle">A shorter way.</h2><button class="action-button" onclick="closeShortcuts()" aria-label="Close shortcuts"><i class="fa-solid fa-xmark"></i></button></div><p class="dialog-description">Made for your keyboard, too.</p><dl class="shortcut-list">
+      <div><dt>Commands &amp; connections</dt><dd><kbd data-shortcut="K">⌘ K</kbd></dd></div>
+      <div><dt>Filter current folder</dt><dd><kbd data-shortcut="F">⌘ F</kbd></dd></div>
+      <div><dt>Select visible items</dt><dd><kbd data-shortcut="A">⌘ A</kbd></dd></div>
+      <div><dt>Open folder / preview file</dt><dd><kbd>↵</kbd> or <kbd>Space</kbd></dd></div>
+      <div><dt>Move between items</dt><dd><kbd>↑</kbd> <kbd>↓</kbd></dd></div>
+      <div><dt>Go up one level</dt><dd><kbd>Alt ←</kbd></dd></div>
+      <div><dt>Close / clear selection</dt><dd><kbd>Esc</kbd></dd></div>
+    </dl><p class="dialog-description">Click to select. Double-click to open. Shift-click for a range.</p></div>
+  </div>
+  <div id="notification" role="status" aria-live="polite" style="display: none;"><i class="fa-solid fa-check-circle" id="notificationIcon"></i><span id="notificationMessage"></span><button class="action-button" onclick="hideNotification()" aria-label="Dismiss notification"><i class="fa-solid fa-xmark"></i></button></div>
   <script src="renderer.js"></script>
-  <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      // Ensure global variables are available
-      window.currentConnection = null; // Share current connection status from renderer.js
-      
-      // Ensure editConnection function is available
-      if (typeof window.editConnection !== 'function' && typeof editConnection === 'function') {
-        window.editConnection = editConnection;
-      }
-      
-      // Ensure that storage type change triggers field updates
-      const storageTypeSelect = document.getElementById('storageType');
-      if (storageTypeSelect) {
-        // Force a change event to ensure fields are properly initialized
-        storageTypeSelect.dispatchEvent(new Event('change'));
-      }
-    });
-
-    // Ensure renderConnectionItem function is available in global scope
-    window.renderConnectionItem = function(connection) {
-      const item = document.createElement('div');
-      item.className = 'connection-item';
-      
-      // Ensure connection has an ID and set it as data attribute
-      if (!connection.id) {
-        connection.id = Date.now().toString() + Math.random().toString(36).substring(2, 9);
-      }
-      
-      item.dataset.connectionId = connection.id;
-      console.log('Setting connection ID attribute:', connection.id);
-      
-      // Create the name element with the type badge
-      const nameDiv = document.createElement('div');
-      nameDiv.className = 'connection-name';
-      
-      // Check if this is the active connection to add an indicator
-      let activeIndicatorHTML = '';
-      if (currentConnection && currentConnection.id === connection.id) {
-        item.classList.add('active');
-        activeIndicatorHTML = '<div class="active-indicator"><i class="fa-solid fa-check"></i></div>';
-      }
-      
-      nameDiv.innerHTML = `${activeIndicatorHTML}${connection.name}
-        <span class="connection-type-badge connection-type-${connection.type || 'aws-s3'}">${window.storageTypeLabel(connection.type)}</span>
-      `;
-      
-      // Set selectConnection click handler directly
-      nameDiv.onclick = function() {
-        console.log('Clicked connection with ID:', connection.id);
-        // Call the main selectConnection function
-        if (typeof window.selectConnection === 'function') {
-          window.selectConnection(connection);
-        } else {
-          // Fallback to loadBuckets
-          loadBuckets(connection.id);
-        }
-      };
-      
-      // Create actions container
-      const actionsDiv = document.createElement('div');
-      actionsDiv.className = 'connection-actions';
-      
-      // Create edit button and set its click handler directly
-      const editButton = document.createElement('button');
-      editButton.className = 'action-button';
-      editButton.title = 'Edit connection';
-      editButton.innerHTML = '<i class="fa-solid fa-edit"></i>';
-      editButton.onclick = function(e) {
-        e.stopPropagation();
-        console.log('Edit button clicked for connection ID:', connection.id);
-        editConnection(connection.id);
-      };
-      
-      // Create delete button and set its click handler directly
-      const deleteButton = document.createElement('button');
-      deleteButton.className = 'action-button';
-      deleteButton.title = 'Delete connection';
-      deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
-      deleteButton.onclick = function(e) {
-        e.stopPropagation();
-        deleteConnection(connection.id);
-      };
-      
-      // Add buttons to actions div
-      actionsDiv.appendChild(editButton);
-      actionsDiv.appendChild(deleteButton);
-      
-      // Add elements to main item
-      item.appendChild(nameDiv);
-      item.appendChild(actionsDiv);
-      
-      return item;
-    }
-    
-    // Ensure selectConnection function can be called from HTML
-    window.loadBuckets = function(connectionId) {
-      console.log('Loading buckets for connection ID:', connectionId);
-      // Find connection object
-      ipcRenderer.invoke('get-connections').then(connections => {
-        const connection = connections.find(conn => conn.id === connectionId);
-        if (connection) {
-          console.log('Found connection object:', connection);
-          // Check if selectConnection is available directly
-          if (typeof window.selectConnection === 'function') {
-            window.selectConnection(connection);
-          } else if (typeof selectConnection === 'function') {
-            selectConnection(connection);
-          } else {
-            console.error('selectConnection function not found');
-            showNotification('Error connecting to storage', 'error');
-          }
-        } else {
-          console.error('Connection not found with ID:', connectionId);
-        }
-      }).catch(error => {
-        console.error('Failed to load connection: ' + error.message, error);
-        showNotification('Failed to load connection: ' + error.message, 'error');
-      });
-    }
-    
-    // Add delete connection functionality
-    window.deleteConnection = function(connectionId) {
-      if (confirm('Are you sure you want to delete this connection?')) {
-        ipcRenderer.invoke('delete-connection', connectionId).then(() => {
-          showNotification('Connection deleted successfully', 'success');
-          loadConnections();
-        }).catch(error => {
-          console.error('Error deleting connection:', error);
-          showNotification(`Failed to delete connection: ${error.message}`, 'error');
-        });
-      }
-    }
-    
-    // Replace file icons with Font Awesome icons where appropriate
-    window.getFileIcon = function(type, key) {
-      if (typeof type === 'object') {
-        // If input is an object, handle it according to renderer.js implementation
-        const item = type;
-        if (!item) return '<i class="fa-solid fa-file"></i>';
-        if (item.isFolder) return '<i class="fa-solid fa-folder"></i>';
-        
-        // Ensure Key exists and is a string
-        const itemKey = item.Key || '';
-        if (!itemKey || typeof itemKey !== 'string') return '<i class="fa-solid fa-file"></i>';
-        
-        return getFileIconByExt(itemKey.split('.').pop().toLowerCase());
-      } else {
-        // Original implementation
-        if (type === 'folder') {
-          return '<i class="fa-solid fa-folder"></i>';
-        }
-        
-        if (!key || typeof key !== 'string') return '<i class="fa-solid fa-file"></i>';
-        const extension = key.split('.').pop().toLowerCase();
-        return getFileIconByExt(extension);
-      }
-    }
-    
-    // Helper function: Get icon based on file extension
-    function getFileIconByExt(extension) {
-      switch(extension) {
-        case 'pdf':
-          return '<i class="fa-solid fa-file-pdf"></i>';
-        case 'doc':
-        case 'docx':
-        case 'odt':
-        case 'rtf':
-          return '<i class="fa-solid fa-file-word"></i>';
-        case 'xls':
-        case 'xlsx':
-        case 'ods':
-        case 'csv':
-          return '<i class="fa-solid fa-file-excel"></i>';
-        case 'ppt':
-        case 'pptx':
-        case 'odp':
-          return '<i class="fa-solid fa-file-powerpoint"></i>';
-        case 'jpg':
-        case 'jpeg':
-        case 'png':
-        case 'gif':
-        case 'webp':
-        case 'bmp':
-        case 'tiff':
-        case 'svg':
-          return '<i class="fa-solid fa-file-image"></i>';
-        case 'mp4':
-        case 'mov':
-        case 'avi':
-        case 'webm':
-        case 'mkv':
-          return '<i class="fa-solid fa-file-video"></i>';
-        case 'mp3':
-        case 'wav':
-        case 'ogg':
-        case 'flac':
-        case 'aac':
-          return '<i class="fa-solid fa-file-audio"></i>';
-        case 'txt':
-        case 'md':
-        case 'log':
-          return '<i class="fa-solid fa-file-lines"></i>';
-        case 'zip':
-        case 'rar':
-        case 'tar':
-        case 'gz':
-        case '7z':
-          return '<i class="fa-solid fa-file-zipper"></i>';
-        case 'html':
-        case 'htm':
-        case 'css':
-        case 'js':
-        case 'jsx':
-        case 'ts':
-        case 'tsx':
-        case 'php':
-        case 'py':
-        case 'java':
-        case 'cpp':
-        case 'c':
-        case 'cs':
-        case 'go':
-        case 'rb':
-        case 'swift':
-        case 'json':
-        case 'xml':
-        case 'yml':
-        case 'yaml':
-          return '<i class="fa-solid fa-file-code"></i>';
-        default:
-          return '<i class="fa-solid fa-file"></i>';
-      }
-    }
-  </script>
+  <script src="workspace-ui.js"></script>
 </body>
 </html>

@@ -41,8 +41,11 @@ if (process.platform === 'win32') {
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1280,
+    height: 840,
+    minWidth: 980,
+    minHeight: 640,
+    backgroundColor: '#fcfcfb',
     icon: path.resolve(__dirname, process.platform === 'darwin' ? 'obrowser.icns' : process.platform === 'win32' ? 'obrowser.ico' : 'obrowser.png'),
     webPreferences: {
       nodeIntegration: true,
@@ -66,13 +69,13 @@ function createWindow() {
         { role: 'paste' },
         { role: 'delete' },
         { type: 'separator' },
-        { role: 'selectAll' }
+        { label: 'Select All', accelerator: 'CmdOrCtrl+A', click: () => mainWindow.webContents.send('select-all-items') }
       ]
     },
     {
       label: 'View',
       submenu: [
-        { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+        { label: 'Refresh Storage', accelerator: 'CmdOrCtrl+R', click: () => mainWindow.webContents.send('refresh-files') },
         { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
         { type: 'separator' },
         { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' }

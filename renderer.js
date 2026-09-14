@@ -5,6 +5,7 @@ let currentBucket = null;
 let currentPrefix = '';
 let selectedFiles = new Set();
 let isEditing = false;
+let listingInProgress = false;
 
 // Loading indicators
 function showLoading(message = 'Loading...') {
@@ -13,6 +14,7 @@ function showLoading(message = 'Loading...') {
 }
 
 function hideLoading() {
+  if (listingInProgress) return;
   document.getElementById('loadingOverlay').style.display = 'none';
 }
 
@@ -435,11 +437,16 @@ function updateFormFields() {
   });
   
   console.log('Form fields updated for storage type:', storageType);
+  // Optional fields stay out of the way, except OSS needs an endpoint or region.
+  const advanced = document.getElementById('advancedConnectionOptions');
+  if (advanced && storageType === 'aliyun-oss') advanced.open = true;
+  if (storageType === 'aws-s3') updateAwsAuthFields();
 }
 
 // Add file size formatting function
 function formatSize(bytes) {
-  if (bytes === 0 || bytes === undefined || bytes === null) return '-';
+  if (bytes === undefined || bytes === null) return '—';
+  if (Number(bytes) === 0) return '0 B';
   
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
@@ -451,204 +458,31 @@ function formatSize(bytes) {
 
 // Connection Management
 async function loadConnections() {
-  showLoading('Loading connections...');
   try {
     let connections = await ipcRenderer.invoke('get-connections');
-    const connectionList = document.getElementById('connectionList');
-    connectionList.innerHTML = '';
-    
-    // Check and fix potential configuration issues
-    if (Array.isArray(connections)) {
-      // Check compatibility and fix
-      let needsUpdate = false;
-      connections = connections.map(conn => {
-        // Ensure all connections have a type
-        if (!conn.type) {
-          conn.type = 'aws-s3'; // Default to AWS S3
-          needsUpdate = true;
-        }
-
-        // Migrate the retired 'pcg' type. It was only ever an S3-compatible
-        // client pointed at a custom endpoint (Google's XML API), so the AWS S3
-        // client with the same endpoint/keys is an exact behavioural match.
-        // Native Google Cloud Storage now has its own 'gcs' type.
-        if (conn.type === 'pcg') {
-          conn.type = 'aws-s3';
-          conn.authMethod = conn.authMethod || 'access-key';
-          needsUpdate = true;
-          console.log(`Migrated legacy PCG connection "${conn.name}" to aws-s3`);
-        }
-        
-        // Ensure connections have an ID
-        if (!conn.id) {
-          conn.id = Date.now().toString() + Math.random().toString(36).substring(2, 9);
-          needsUpdate = true;
-        }
-        
-        // Ensure Aliyun OSS connections have secure property
-        if (conn.type === 'aliyun-oss' && conn.secure === undefined) {
-          conn.secure = true;
-          needsUpdate = true;
-        }
-        
-        return conn;
-      });
-      
-      // If any connections were fixed, save the updated list
-      if (needsUpdate) {
-        console.log('Fixed connection configurations, saving updates');
-        await ipcRenderer.invoke('save-connections', connections);
+    if (!Array.isArray(connections)) connections = [];
+    let needsUpdate = false;
+    connections = connections.map(conn => {
+      if (!conn.type) { conn.type = 'aws-s3'; needsUpdate = true; }
+      if (conn.type === 'pcg') {
+        conn.type = 'aws-s3';
+        conn.authMethod = conn.authMethod || 'access-key';
+        needsUpdate = true;
       }
-      
-      if (connections.length > 0) {
-        connections.forEach(conn => {
-          // Use render function to generate connection items
-          if (typeof renderConnectionItem === 'function') {
-            // If renderConnectionItem function exists, use it
-            const connectionItem = renderConnectionItem(conn);
-            // Rebind click events (because innerHTML doesn't preserve events)
-            const nameDiv = connectionItem.querySelector('.connection-name');
-            if (nameDiv) {
-              nameDiv.onclick = () => {
-                console.log('Selecting connection with ID:', conn.id);
-                selectConnection(conn);
-              };
-            }
-            // Add events for edit and delete buttons
-            const editButton = connectionItem.querySelector('.connection-actions button:first-child');
-            if (editButton) {
-              editButton.onclick = (e) => {
-                e.stopPropagation();
-                console.log('Editing connection with ID:', conn.id);
-                editConnection(conn);
-              };
-            }
-            const deleteButton = connectionItem.querySelector('.connection-actions button:last-child');
-            if (deleteButton) {
-              deleteButton.onclick = async (e) => {
-                e.stopPropagation();
-                if (confirm('Are you sure you want to delete this connection?')) {
-                  try {
-                    await ipcRenderer.invoke('delete-connection', conn.id);
-                    showNotification(`Connection "${conn.name}" successfully deleted`, 'success');
-                    loadConnections();
-                  } catch (error) {
-                    console.error('Error deleting connection:', error);
-                    showNotification(`Failed to delete connection: ${error.message}`, 'error');
-                  }
-                }
-              };
-            }
-            
-            // Mark as active if it's the current connection
-            if (currentConnection && currentConnection.id === conn.id) {
-              connectionItem.classList.add('active');
-              // Add active indicator
-              if (!connectionItem.querySelector('.active-indicator')) {
-                const activeIndicator = document.createElement('div');
-                activeIndicator.className = 'active-indicator';
-                activeIndicator.innerHTML = '<i class="fa-solid fa-check"></i>';
-                const nameElement = connectionItem.querySelector('.connection-name');
-                if (nameElement) {
-                  nameElement.insertBefore(activeIndicator, nameElement.firstChild);
-                }
-              }
-            }
-            
-            connectionList.appendChild(connectionItem);
-          } else {
-            // If renderConnectionItem function doesn't exist, use original implementation
-            const div = document.createElement('div');
-            div.className = 'connection-item';
-            
-            const nameDiv = document.createElement('div');
-            nameDiv.className = 'connection-name';
-            
-            // Add connection type badge
-            const connType = conn.type || 'aws-s3'; // Default to aws-s3 for backward compatibility
-            
-            nameDiv.innerHTML = `${conn.name} <span class="connection-type-badge connection-type-${connType}">${storageTypeLabel(connType)}</span>`;
-            nameDiv.onclick = () => selectConnection(conn);
-            
-            const actionsDiv = document.createElement('div');
-            actionsDiv.className = 'connection-actions';
-            
-            const editButton = document.createElement('button');
-            editButton.className = 'action-button';
-            editButton.innerHTML = '<i class="fa-solid fa-edit"></i>';
-            editButton.onclick = (e) => {
-              e.stopPropagation();
-              console.log('Editing connection with ID:', conn.id);
-              editConnection(conn);
-            };
-            
-            const deleteButton = document.createElement('button');
-            deleteButton.className = 'action-button';
-            deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
-            deleteButton.onclick = async (e) => {
-              e.stopPropagation();
-              if (confirm('Are you sure you want to delete this connection?')) {
-                try {
-                  await ipcRenderer.invoke('delete-connection', conn.id);
-                  showNotification(`Connection "${conn.name}" successfully deleted`, 'success');
-                  loadConnections();
-                } catch (error) {
-                  console.error('Error deleting connection:', error);
-                  showNotification(`Failed to delete connection: ${error.message}`, 'error');
-                }
-              }
-            };
-            
-            actionsDiv.appendChild(editButton);
-            actionsDiv.appendChild(deleteButton);
-            
-            div.appendChild(nameDiv);
-            div.appendChild(actionsDiv);
-            connectionList.appendChild(div);
-          }
-        });
-      } else {
-        connectionList.innerHTML = '<div class="connection-item" style="color: #6c757d;">No connections available</div>';
-      }
-    } else {
-      console.log('Connection configuration is not in array format');
-      connectionList.innerHTML = '<div class="connection-item" style="color: #6c757d;">No connections available</div>';
-    }
+      if (!conn.id) { conn.id = crypto.randomUUID(); needsUpdate = true; }
+      if (conn.type === 'aliyun-oss' && conn.secure === undefined) { conn.secure = true; needsUpdate = true; }
+      return conn;
+    });
+    if (needsUpdate) await ipcRenderer.invoke('save-connections', connections);
+    workspaceConnections = connections;
+    const list = document.getElementById('connectionList');
+    list.replaceChildren(...connections.map(renderConnectionItem));
+    if (!connections.length) list.innerHTML = '<div class="connection-empty">Your connected clouds will<br>appear here.</div>';
+    document.title = currentConnection ? `OBrowser — ${currentConnection.name}` : 'OBrowser';
+    updateWorkspace();
   } catch (error) {
-    console.error('Error loading connections:', error);
-    // Don't show alert to avoid disturbing users at startup
-    const connectionList = document.getElementById('connectionList');
-    connectionList.innerHTML = '<div class="connection-item" style="color: #dc3545;">Failed to load connections</div>';
-  } finally {
-    hideLoading();
-  }
-
-  // Update connection status area if we have an active connection
-  if (currentConnection) {
-    const connectionStatus = document.getElementById('connectionStatus');
-    if (connectionStatus) {
-      // Only render a placeholder here if selectConnection hasn't set up the
-      // status bar yet (e.g. connection list refreshed before any selection).
-      // selectConnection owns the full rendering, including the region switcher.
-      if (!connectionStatus.dataset.ownedBySelect) {
-        connectionStatus.style.display = 'flex';
-
-        const storageTypeName = storageTypeLabel(currentConnection.type);
-        connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
-      }
-
-      // Always refresh the document title to match the current connection.
-      document.title = `OBrowser - ${currentConnection.name}`;
-    }
-  } else {
-    // Hide connection status if no active connection
-    const connectionStatus = document.getElementById('connectionStatus');
-    if (connectionStatus) {
-      connectionStatus.style.display = 'none';
-    }
-    
-    // Reset document title
-    document.title = 'OBrowser';
+    document.getElementById('connectionList').innerHTML = '<div class="connection-empty">Connections could not be loaded.<br><button class="text-action-button" onclick="loadConnections()">Try again</button></div>';
+    showNotification(`Could not load connections: ${error.message}`, 'error');
   }
 }
 
@@ -659,6 +493,8 @@ function showNewConnectionModal() {
   
   // Reset form
   form.reset();
+  const advanced = document.getElementById('advancedConnectionOptions');
+  if (advanced) advanced.open = false;
   
   // Set default AWS S3 storage type
   const storageTypeSelect = form.elements.type;
@@ -677,11 +513,12 @@ function showNewConnectionModal() {
   storageTypeSelect.dispatchEvent(new Event('change'));
   
   // Show the modal
-  document.getElementById('connectionModal').style.display = 'block';
+  openDialog('connectionModal');
+  document.getElementById('connectionName').focus();
 }
 
 function hideConnectionModal() {
-  document.getElementById('connectionModal').style.display = 'none';
+  closeDialog('connectionModal');
   document.getElementById('connectionForm').reset();
 }
 
@@ -739,7 +576,8 @@ window.renderer_editConnection = function(connection) {
   // Reset form first
   form.reset();
   
-  console.log('Starting to edit connection:', connection);
+  const advanced = document.getElementById('advancedConnectionOptions');
+  if (advanced) advanced.open = Boolean(connection.endpoint || connection.region || connection.bucket || connection.prefix);
   
   // Ensure connection has a valid ID
   if (!connection.id) {
@@ -939,56 +777,13 @@ window.renderer_editConnection = function(connection) {
   }, 200); // Increased delay to ensure DOM is fully updated
   
   // Show the modal
-  document.getElementById('connectionModal').style.display = 'block';
+  openDialog('connectionModal');
+  document.getElementById('connectionName').focus();
 }
 
 // File search functionality
 function filterFiles(query) {
-  const fileItems = document.querySelectorAll('.file-item');
-  const searchText = query.trim().toLowerCase();
-  
-  if (!searchText) {
-    // If search text is empty, show all items
-    fileItems.forEach(item => {
-      item.style.display = '';
-    });
-    return;
-  }
-  
-  fileItems.forEach(item => {
-    const fileNameEl = item.querySelector('.file-name');
-    const fileName = fileNameEl ? fileNameEl.textContent.toLowerCase() : '';
-    
-    // If current item is a bucket, only search bucket name
-    if (item.classList.contains('bucket-item')) {
-      if (fileName.includes(searchText)) {
-        item.style.display = '';
-      } else {
-        item.style.display = 'none';
-      }
-      return;
-    }
-    
-    // For file items, search file name and path
-    const filePath = item.querySelector('.file-path');
-    const pathText = filePath ? filePath.getAttribute('title').toLowerCase() : '';
-    
-    // Get type, size, etc. other visible information
-    const fileDetails = item.querySelectorAll('.file-details span');
-    let otherInfo = '';
-    if (fileDetails) {
-      fileDetails.forEach(detail => {
-        otherInfo += ' ' + detail.textContent.toLowerCase();
-      });
-    }
-    
-    // If search text matches file name, path, or other details, show the item
-    if (fileName.includes(searchText) || pathText.includes(searchText) || otherInfo.includes(searchText)) {
-      item.style.display = '';
-    } else {
-      item.style.display = 'none';
-    }
-  });
+  filterWorkspaceFiles(query);
 }
 
 document.getElementById('connectionForm').onsubmit = async (e) => {
@@ -1034,14 +829,9 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
           const awsAuthMethodEl = document.getElementById('awsAuthMethod');
           const awsAuthMethod = awsAuthMethodEl ? awsAuthMethodEl.value : 'access-key';
 
-          // Endpoint is optional for profile mode (SDK picks the default
-          // regional endpoint). Region is now optional too — S3 ListBuckets
-          // is a global API, and followRegionRedirects handles per-bucket
-          // routing automatically.
-          if (awsEndpoint && !awsEndpoint.value && awsAuthMethod !== 'profile') {
-            formIsValid = false;
-            errorMessage = 'Please enter Endpoint';
-          } else if (awsAuthMethod === 'profile') {
+          // Standard S3 resolves endpoints for both keys and profiles. Only
+          // S3-compatible/custom services need the advanced endpoint override.
+          if (awsAuthMethod === 'profile') {
             const profileInput = document.getElementById('awsProfile');
             if (!profileInput || !profileInput.value.trim()) {
               formIsValid = false;
@@ -1119,7 +909,6 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
         const connections = await ipcRenderer.invoke('get-connections');
         const existingConnection = connections.find(conn => conn.id === connectionId);
         if (existingConnection) {
-          console.log('Found existing connection to edit:', existingConnection);
           // Start with the existing connection properties
           connection = { ...existingConnection };
         } else {
@@ -1255,7 +1044,7 @@ document.getElementById('connectionForm').onsubmit = async (e) => {
     if (bucketField) connection.bucket = bucketField.value || null;
     if (prefixField) connection.prefix = prefixField.value || '';
     
-    console.log('Final connection to save:', connection);
+    // Do not log credentials contained in the connection profile.
     
     // Save the connection
     if (isEditing) {
@@ -1325,7 +1114,7 @@ async function selectConnection(connection) {
         connectionStatus.dataset.ownedBySelect = '1';
         // Based on different storage types, display different messages
         const storageTypeName = storageTypeLabel(currentConnection.type);
-        connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
+        connectionStatus.innerHTML = `<i class="fa-solid fa-database"></i> <strong>${escapeHtml(currentConnection.name)}</strong> <span class="connection-type-badge connection-type-${currentConnection.type || 'aws-s3'}">${storageTypeName}</span>`;
 
         // For AWS S3, append a region switcher so the user can change region
         // without editing the saved connection. Region is persisted as an
@@ -1426,7 +1215,8 @@ async function selectConnection(connection) {
     updateBreadcrumb();
     
     try {
-      await loadFiles();
+      const loaded = await loadFiles();
+      if (!loaded) return;
       // Based on different storage types, display different messages
       const storageTypeName = storageTypeLabel(currentConnection.type);
       showNotification(`Connected to "${currentConnection.name}" (${storageTypeName})`, 'info');
@@ -1457,105 +1247,46 @@ window.selectConnection = selectConnection;
 
 // Add update active connection status function
 function updateActiveConnection(connectionId) {
-  if (!connectionId) {
-    console.warn('updateActiveConnection called with invalid connectionId:', connectionId);
-    return;
-  }
-  
-  console.log('Updating active connection status for ID:', connectionId);
-  
-  // First remove all active-indicator elements from all connection items
-  document.querySelectorAll('.active-indicator').forEach(indicator => {
-    indicator.remove();
-  });
-  
-  // Remove all connection item active state
   document.querySelectorAll('.connection-item').forEach(item => {
-    item.classList.remove('active');
+    const active = item.dataset.connectionId === connectionId;
+    item.classList.toggle('active', active);
+    item.querySelector('.connection-name')?.setAttribute('aria-pressed', String(active));
   });
-  
-  // Find matching connection item and add active state
-  const connectionItems = document.querySelectorAll('.connection-item');
-  let found = false;
-  
-  console.log('Looking for connection item with data-connection-id =', connectionId);
-  console.log('Found', connectionItems.length, 'connection items to check');
-  
-  for (let i = 0; i < connectionItems.length; i++) {
-    const item = connectionItems[i];
-    console.log('Checking connection item', i, 'data-connection-id =', item.dataset.connectionId);
-    
-    // Check if the data-connection-id attribute matches
-    if (item.dataset.connectionId === connectionId) {
-      console.log('FOUND! Adding active state to connection item with ID:', connectionId);
-      found = true;
-      item.classList.add('active');
-      
-      // Add active indicator
-      const activeIndicator = document.createElement('div');
-      activeIndicator.className = 'active-indicator';
-      activeIndicator.innerHTML = '<i class="fa-solid fa-check"></i>';
-      const nameDiv = item.querySelector('.connection-name');
-      if (nameDiv) {
-        nameDiv.insertBefore(activeIndicator, nameDiv.firstChild);
-      }
-      
-      // Update document title with connection name
-      if (currentConnection && currentConnection.name) {
-        document.title = `OBrowser - ${currentConnection.name}`;
-      }
-      
-      // Update connection status area
-      const connectionStatus = document.getElementById('connectionStatus');
-      if (connectionStatus) {
-        connectionStatus.style.display = 'block';
-        connectionStatus.innerHTML = `<i class="fa-solid fa-link"></i> Connected to: <strong>${currentConnection.name}</strong>`;
-      }
-      
-      break;
-    }
-  }
-  
-  if (!found) {
-    console.warn('Could not find connection item with ID:', connectionId);
-  }
 }
 
 function updateBreadcrumb() {
   const breadcrumb = document.getElementById('pathBreadcrumb');
-  const parts = currentPrefix.split('/').filter(p => p);
-  
-  // Start using first position (bucket or root directory)
-  let html = `<span class="path-segment" onclick="navigateTo('')" title="Root directory">
-                <i class="fas fa-database"></i><span style="margin-left: 5px;">${currentBucket || 'Buckets'}</span>
-              </span>`;
-  
-  // If there are path parts, add separator and path parts
-  if (parts.length > 0) {
-    let path = '';
-    parts.forEach((part, i) => {
-      path += part + '/';
-      html += ` <i class="fas fa-chevron-right" style="color: #aaa; font-size: 0.7em; margin: 0 2px;"></i> `;
-      
-      // Add appropriate icon for each part
-      if (i === parts.length - 1) {
-        // Current folder use opened folder icon
-        html += `<span class="path-segment current" onclick="navigateTo('${path}')" title="${path}">
-                  <i class="fas fa-folder-open"></i><span style="margin-left: 5px;">${part}</span>
-                </span>`;
-      } else {
-        // Parent folder use regular folder icon
-        html += `<span class="path-segment" onclick="navigateTo('${path}')" title="${path}">
-                  <i class="fas fa-folder"></i><span style="margin-left: 5px;">${part}</span>
-                </span>`;
-      }
-    });
-  } else if (currentBucket) {
-    // If in bucket root directory, show some hint
-    html += ` <span style="color: #999; font-style: italic; margin-left: 0.5rem;">(root directory)</span>`;
+  breadcrumb.replaceChildren();
+  const addCrumb = (label, action, current = false) => {
+    if (breadcrumb.childNodes.length) {
+      const separator = document.createElement('i');
+      separator.className = 'fa-solid fa-chevron-right';
+      breadcrumb.appendChild(separator);
+    }
+    const button = document.createElement('button');
+    button.className = 'path-segment' + (current ? ' current' : '');
+    button.textContent = label;
+    button.onclick = action;
+    if (current) button.setAttribute('aria-current', 'location');
+    breadcrumb.appendChild(button);
+  };
+  if (!currentConnection) { updateWorkspace(); return; }
+  if (!currentConnection.bucket) {
+    addCrumb(currentConnection.name, () => {
+      currentBucket = null; currentPrefix = ''; updateBreadcrumb(); loadFiles();
+    }, !currentBucket);
   }
-  
-  breadcrumb.innerHTML = html;
+  if (currentBucket) addCrumb(currentBucket, () => navigateTo(''), !currentPrefix);
+  let prefix = '';
+  const parts = currentPrefix.split('/').filter(Boolean);
+  parts.forEach((part, index) => {
+    prefix += part + '/';
+    const target = prefix;
+    addCrumb(part, () => navigateTo(target), index === parts.length - 1);
+  });
+  document.getElementById('searchInput').value = '';
+  clearSelection();
+  updateWorkspace();
 }
 
 /**
@@ -1654,629 +1385,165 @@ function getFileIcon(item) {
 let currentSortField = 'name'; // 默认按名称排序
 let currentSortDirection = 'asc'; // 默认升序排序
 
-async function loadFiles() {
+let fileLoadGeneration = 0;
+let loadedListing = null;
+
+function formatFileDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function createRowAction(container, title, icon, action) {
+  const button = document.createElement('button');
+  button.className = 'action-button';
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.innerHTML = `<i class="fa-solid fa-${icon}"></i>`;
+  button.onclick = event => { event.stopPropagation(); action(); };
+  container.appendChild(button);
+}
+
+function sortObjects(items) {
+  return [...items].filter(item => item && typeof item.Key === 'string').sort((a, b) => {
+    if (Boolean(a.isFolder) !== Boolean(b.isFolder)) return a.isFolder ? -1 : 1;
+    const values = item => ({
+      name: item.Key.replace(/\/+$/, '').split('/').pop(),
+      size: item.isFolder ? 0 : Number(item.Size || 0),
+      modified: new Date(item.LastModified || 0).getTime() || 0,
+      type: item.isFolder ? 'Folder' : item.ContentType || '',
+      storageClass: item.StorageClass || ''
+    });
+    const left = values(a)[currentSortField], right = values(b)[currentSortField];
+    const comparison = typeof left === 'number' ? left - right : String(left).localeCompare(String(right), undefined, { numeric: true });
+    return currentSortDirection === 'asc' ? comparison : -comparison;
+  });
+}
+
+async function loadFiles(refresh = true) {
   if (!currentConnection) return;
-
-  showLoading('Loading files...');
+  const generation = ++fileLoadGeneration;
+  listingInProgress = true;
+  const connection = { ...currentConnection };
+  const bucket = currentBucket, prefix = currentPrefix;
+  const location = JSON.stringify([connection.id, bucket, prefix]);
+  if (refresh) showLoading('Loading storage…');
+  if (refresh) clearSelection();
   try {
-    console.log('Loading files for connection:', currentConnection.id, 
-                'Type:', currentConnection.type, 
-                'Region:', currentConnection.region,
-                'Endpoint:', currentConnection.endpoint);
-                
-    const result = await ipcRenderer.invoke('list-objects', 
-                                           currentConnection.id, 
-                                           currentBucket, 
-                                           currentPrefix);
-    
-    console.log('Received file list result:', result ? result.type : 'No result', 
-                result && result.data ? `${result.data.length} items` : 'No data');
-                
+    const result = !refresh && loadedListing?.location === location ? loadedListing.result :
+      await ipcRenderer.invoke('list-objects', connection.id, bucket, prefix);
+    if (generation !== fileLoadGeneration) return false;
+    if (!result || !Array.isArray(result.data) || !['buckets', 'objects'].includes(result.type)) throw new Error('The storage provider returned an unexpected response.');
+    loadedListing = { location, result };
     const fileList = document.getElementById('fileList');
-    fileList.innerHTML = '';
-    selectedFiles.clear();
-
-    // Based on whether to display bucket list, adjust header
-    const columnHeader = document.querySelector('.column-header');
-    
-    if (result && result.type === 'buckets' && Array.isArray(result.data)) {
-      // Modify header to column for bucket applicable, remove Owner field
-      if (columnHeader) {
-        columnHeader.innerHTML = `
-          <div></div>
-          <div></div>
-          <div>Bucket Name</div>
-          <div>Created</div>
-          <div>Region</div>
-          <div>Storage Type</div>
-          <div>Access</div>
-          <div>Actions</div>
-        `;
-      }
-      
-      if (result.data.length === 0) {
-        fileList.innerHTML = '<div class="file-item" style="justify-content: center; color: #6c757d;">No buckets found</div>';
-        return;
-      }
-      
-      result.data.forEach(bucket => {
-        const div = document.createElement('div');
-        div.className = 'file-item bucket-item';
-        
-        // Add checkbox container (consistent with file items)
-        const checkboxContainer = document.createElement('div');
-        checkboxContainer.className = 'checkbox-container';
-        checkboxContainer.style.width = '20px';
-        checkboxContainer.style.visibility = 'hidden'; // Hide bucket checkbox
-        div.appendChild(checkboxContainer);
-        
-        // Add bucket icon
-        const icon = document.createElement('div');
-        icon.className = 'file-icon';
-        icon.innerHTML = '<i class="fa-solid fa-database"></i>'; // Use database icon to represent bucket
-        div.appendChild(icon);
-        
-        const details = document.createElement('div');
-        details.className = 'file-details bucket-details';
-        
-        // Extract region information (if any)
-        const region = bucket.Location || bucket.Region || '-';
-        // Extract storage type information
-        const storageType = currentConnection ? storageTypeLabel(currentConnection.type) : 'Unknown';
-        
-        details.innerHTML = `
-          <span class="file-name">${bucket.Name || 'Unknown'}</span>
-          <span>${bucket.CreationDate ? new Date(bucket.CreationDate).toLocaleString() : '-'}</span>
-          <span>${region}</span>
-          <span>${storageType}</span>
-          <span>${bucket.PublicAccess ? 'Public' : 'Private'}</span>
-        `;
-        
-        // Add operation button container
-        const actionsContainer = document.createElement('div');
-        actionsContainer.className = 'bucket-actions';
-        
-        // Add open operation
-        const openButton = document.createElement('button');
-        openButton.className = 'action-button';
-        openButton.title = 'Open';
-        openButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>';
-        openButton.onclick = async (e) => {
-          e.stopPropagation();
-          try {
-            showLoading('Loading bucket contents...');
-            currentBucket = bucket.Name;
-            currentPrefix = '';
-            updateBreadcrumb();
-            await loadFiles();
-          } catch (error) {
-            console.error('Error accessing bucket:', error);
-            showNotification('Failed to access bucket: ' + error.message, 'error');
-          } finally {
-            hideLoading();
+    fileList.replaceChildren();
+    const header = document.querySelector('.column-header');
+    if (result.type === 'buckets') {
+      header.innerHTML = '<div></div><div></div><div>Bucket name</div><div>Provider</div><div>Created</div><div>Region</div><div>Access</div><div>Open</div>';
+      for (const item of result.data) {
+        if (!item || typeof item.Name !== 'string') continue;
+        const row = document.createElement('div');
+        row.className = 'file-item bucket-item';
+        row.dataset.key = item.Name;
+        row.dataset.search = item.Name.toLowerCase();
+        row.tabIndex = 0;
+        row.setAttribute('role', 'row');
+        row.setAttribute('aria-label', `Open bucket ${item.Name}`);
+        row.innerHTML = `<div></div><div class="file-icon"><i class="fa-solid fa-database"></i></div><div class="file-details"><span class="file-name" title="${escapeHtml(item.Name)}">${escapeHtml(item.Name)}</span><span>${escapeHtml(storageTypeLabel(connection.type))}</span><span>${formatFileDate(item.CreationDate)}</span><span>${escapeHtml(item.Location || item.Region || '—')}</span><span>${item.PublicAccess ? 'Public' : 'Private'}</span><div class="bucket-actions"></div></div>`;
+        const open = () => { currentBucket = item.Name; currentPrefix = ''; updateBreadcrumb(); loadFiles(); };
+        createRowAction(row.querySelector('.bucket-actions'), 'Open bucket', 'chevron-right', open);
+        row.ondblclick = event => { if (!event.target.closest('button')) open(); };
+        row.onkeydown = event => {
+          if (event.target !== row) return;
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
+          if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+            event.preventDefault();
+            const rows = [...fileList.querySelectorAll('.bucket-item')].filter(item => !item.hidden);
+            rows[rows.indexOf(row) + (event.key === 'ArrowDown' ? 1 : -1)]?.focus();
           }
         };
-        actionsContainer.appendChild(openButton);
-        
-        details.appendChild(actionsContainer);
-        
-        const handleBucketClick = async (e) => {
-          if (e) e.stopPropagation();
-          try {
-            showLoading('Loading bucket contents...');
-            currentBucket = bucket.Name;
-            currentPrefix = '';
-            console.log('Selected bucket:', currentBucket);
-            updateBreadcrumb();
-            await loadFiles();
-          } catch (error) {
-            console.error('Error accessing bucket:', error);
-            showNotification('Failed to access bucket: ' + error.message, 'error');
-          } finally {
-            hideLoading();
-          }
+        row.onclick = () => row.focus();
+        fileList.appendChild(row);
+      }
+      if (!fileList.childElementCount) renderEmptyState('No buckets to show', 'Check the account permissions or choose a different region. You can also specify a bucket in your connection.', 'database', { label: 'Edit connection', run: () => editConnection(connection) });
+    } else {
+      header.innerHTML = '<div><input type="checkbox" id="selectAll" aria-label="Select all visible items"></div><div></div>' +
+        [['name', 'Name'], ['size', 'Size'], ['modified', 'Modified'], ['type', 'Type'], ['storageClass', 'Storage class']].map(([field, label]) =>
+          `<button class="sortable-column" data-sort="${field}" aria-label="Sort by ${label}">${label}<i class="fa-solid fa-sort"></i></button>`).join('') + '<div>Actions</div>';
+      document.getElementById('selectAll').onchange = event => selectVisibleFiles(event.target.checked);
+      header.querySelectorAll('.sortable-column').forEach(column => {
+        column.onclick = () => {
+          const field = column.dataset.sort;
+          if (field === currentSortField) currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+          else { currentSortField = field; currentSortDirection = 'asc'; }
+          loadFiles(false);
         };
-
-        div.onclick = handleBucketClick;
-        details.onclick = handleBucketClick;
-        icon.onclick = handleBucketClick;
-        
-        div.appendChild(details);
-        fileList.appendChild(div);
       });
-    } else if (result && result.type === 'objects' && Array.isArray(result.data)) {
-      // Restore to standard file list header, add path column with sorting functionality
-      if (columnHeader) {
-        columnHeader.innerHTML = `
-          <div></div>
-          <div></div>
-          <div class="sortable-column" data-sort="name">Name <i class="fa-solid fa-sort"></i></div>
-          <div class="sortable-column" data-sort="size">Size <i class="fa-solid fa-sort"></i></div>
-          <div class="sortable-column" data-sort="modified">Modified <i class="fa-solid fa-sort"></i></div>
-          <div class="sortable-column" data-sort="type">Type <i class="fa-solid fa-sort"></i></div>
-          <div class="sortable-column" data-sort="storageClass">Storage Class <i class="fa-solid fa-sort"></i></div>
-          <div>Actions</div>
-        `;
-        
-        // 添加排序列点击事件
-        const sortableColumns = columnHeader.querySelectorAll('.sortable-column');
-        sortableColumns.forEach(column => {
-          column.style.cursor = 'pointer';
-          column.addEventListener('click', () => {
-            const sortField = column.getAttribute('data-sort');
-            // 如果点击的是当前排序字段，则切换排序方向
-            if (sortField === currentSortField) {
-              currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
-            } else {
-              currentSortField = sortField;
-              currentSortDirection = 'asc';
-            }
-            
-            // 更新排序图标
-            sortableColumns.forEach(col => {
-              const icon = col.querySelector('i');
-              if (col.getAttribute('data-sort') === currentSortField) {
-                icon.className = currentSortDirection === 'asc' ? 
-                  'fa-solid fa-sort-up' : 'fa-solid fa-sort-down';
-              } else {
-                icon.className = 'fa-solid fa-sort';
-              }
-            });
-            
-            // 重新加载文件列表
-            loadFiles();
-          });
+      for (const item of sortObjects(result.data)) {
+        const name = item.Key.replace(/\/+$/, '').split('/').pop() || item.Key;
+        const row = document.createElement('div');
+        row.className = 'file-item' + (item.isFolder ? ' folder' : '');
+        const type = item.isFolder ? 'Folder' : item.ContentType || 'File';
+        row.innerHTML = `<div class="checkbox-container"><input type="checkbox" class="file-checkbox"></div><div class="file-icon">${getFileIcon(item)}</div><div class="file-details"><span class="file-name" title="${escapeHtml(item.Key)}">${escapeHtml(name)}</span><span>${item.isFolder ? '—' : formatSize(item.Size)}</span><span title="${escapeHtml(item.LastModified || '')}">${formatFileDate(item.LastModified)}</span><span title="${escapeHtml(type)}">${escapeHtml(type)}</span><span>${escapeHtml(item.StorageClass || '—')}</span><div class="file-actions"></div></div>`;
+        row.querySelector('input').onclick = event => { event.stopPropagation(); toggleFileSelection(item.Key, item.isFolder); };
+        const actions = row.querySelector('.file-actions');
+        const open = () => item.isFolder ? navigateTo(item.Key) : previewFile(item);
+        createRowAction(actions, item.isFolder ? 'Open folder' : 'Preview', item.isFolder ? 'folder-open' : 'eye', open);
+        createRowAction(actions, 'Copy path', 'copy', async () => {
+          try {
+            await navigator.clipboard.writeText(storageObjectUri(connection.type, bucket, item.Key));
+            showNotification('Object path copied.');
+          } catch (error) { showNotification(`Could not copy path: ${error.message}`, 'error'); }
         });
-        
-        // 显示当前排序状态
-        const activeColumn = columnHeader.querySelector(`[data-sort="${currentSortField}"]`);
-        if (activeColumn) {
-          const icon = activeColumn.querySelector('i');
-          icon.className = currentSortDirection === 'asc' ? 
-            'fa-solid fa-sort-up' : 'fa-solid fa-sort-down';
-        }
+        if (!item.isFolder) createRowAction(actions, 'Download', 'download', async () => {
+          try {
+            showLoading('Preparing download…');
+            const url = await getObjectUrl(connection.id, bucket, item.Key, 'download');
+            await startVerifiedDownload(url, name);
+            showNotification(`Download started: ${name}`);
+          } catch (error) { showNotification(`Download failed: ${error.message}`, 'error'); }
+          finally { hideLoading(); }
+        });
+        createRowAction(actions, item.isFolder ? 'Delete folder' : 'Delete file', 'trash', async () => {
+          if (!confirm(`Permanently delete "${name}"${item.isFolder ? ' and everything inside it' : ''}? This cannot be undone.`)) return;
+          try {
+            showLoading('Deleting…');
+            await ipcRenderer.invoke('delete-object', connection.id, item.Key, bucket, Boolean(item.isFolder));
+            showNotification(`Deleted "${name}".`);
+            if (currentConnection?.id === connection.id && currentBucket === bucket && currentPrefix === prefix) await loadFiles();
+          } catch (error) { showNotification(`Delete failed: ${error.message}`, 'error'); }
+          finally { hideLoading(); }
+        });
+        attachRowInteraction(row, item, open);
+        fileList.appendChild(row);
       }
-      
-      if (result.data.length === 0) {
-        fileList.innerHTML = '<div class="file-item" style="justify-content: center; color: #6c757d;">Folder is empty</div>';
-        return;
-      }
-      
-      // 对数据进行排序
-      const sortedData = [...result.data].sort((a, b) => {
-        // 文件夹始终排在前面
-        if (a.isFolder && !b.isFolder) return -1;
-        if (!a.isFolder && b.isFolder) return 1;
-        
-        // 根据当前排序字段进行排序
-        switch (currentSortField) {
-          case 'name':
-            // 获取文件名进行比较
-            const nameA = a.Key ? a.Key.split('/').pop() : '';
-            const nameB = b.Key ? b.Key.split('/').pop() : '';
-            return currentSortDirection === 'asc' ? 
-              nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
-          
-          case 'size':
-            // 文件夹大小视为0
-            const sizeA = a.isFolder ? 0 : (a.Size || 0);
-            const sizeB = b.isFolder ? 0 : (b.Size || 0);
-            return currentSortDirection === 'asc' ? 
-              sizeA - sizeB : sizeB - sizeA;
-          
-          case 'modified':
-            // 比较最后修改时间
-            const dateA = a.LastModified ? new Date(a.LastModified).getTime() : 0;
-            const dateB = b.LastModified ? new Date(b.LastModified).getTime() : 0;
-            return currentSortDirection === 'asc' ? 
-              dateA - dateB : dateB - dateA;
-          
-          case 'type':
-            // 比较文件类型
-            const typeA = a.isFolder ? 'Folder' : (a.ContentType || '');
-            const typeB = b.isFolder ? 'Folder' : (b.ContentType || '');
-            return currentSortDirection === 'asc' ? 
-              typeA.localeCompare(typeB) : typeB.localeCompare(typeA);
-          
-          case 'storageClass':
-            // 比较存储类别
-            const storageA = a.StorageClass || '';
-            const storageB = b.StorageClass || '';
-            return currentSortDirection === 'asc' ? 
-              storageA.localeCompare(storageB) : storageB.localeCompare(storageA);
-          
-          default:
-            return 0;
-        }
-      });
-      
-      // 使用排序后的数据渲染文件列表
-      sortedData.forEach(item => {
-        // Ensure item is valid, check necessary attributes
-        if (!item) return;
-        
-        const div = document.createElement('div');
-        div.className = `file-item${item.isFolder ? ' folder' : ''}`;
-        
-        // 如果是最近上传的文件（10分钟内），添加高亮样式
-        if (!item.isFolder && item.LastModified) {
-          const uploadTime = new Date(item.LastModified).getTime();
-          const currentTime = new Date().getTime();
-          const timeDiff = currentTime - uploadTime; // 毫秒
-          
-          // 如果文件是10分钟内上传的，添加高亮样式
-          if (timeDiff < 10 * 60 * 1000) {
-            div.classList.add('recently-uploaded');
-            // 添加"新"标签
-            const newBadge = document.createElement('span');
-            newBadge.className = 'new-badge';
-            newBadge.textContent = 'NEW';
-            div.appendChild(newBadge);
-          }
-        }
-        // Create checkbox container to prevent click propagation
-        const checkboxContainer = document.createElement('div');
-        checkboxContainer.className = 'checkbox-container';
-        checkboxContainer.style.width = '20px';
-        checkboxContainer.onclick = (e) => e.stopPropagation();
-        
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'file-checkbox';
-        checkbox.onclick = (e) => {
-          e.stopPropagation();
-          // Ensure Key exists
-          if (item.Key) {
-            toggleFileSelection(item.Key, item.isFolder);
-          }
-        };
-        checkboxContainer.appendChild(checkbox);
-        div.appendChild(checkboxContainer);
-
-        const icon = document.createElement('div');
-        icon.className = 'file-icon';
-        // Use safer icon get function
-        icon.innerHTML = getFileIcon(item);
-        div.appendChild(icon);
-        
-        const details = document.createElement('div');
-        details.className = 'file-details';
-        
-        // Safely get file name and path
-        let fileName = '';
-        let filePath = '';
-        if (item.Key) {
-          if (item.isFolder) {
-            const parts = item.Key.split('/').filter(p => p);
-            fileName = parts.length > 0 ? parts[parts.length - 1] : '';
-            filePath = parts.length > 1 ? parts.slice(0, -1).join('/') + '/' : '';
-          } else {
-            const parts = item.Key.split('/');
-            fileName = parts.length > 0 ? parts[parts.length - 1] : '';
-            filePath = parts.length > 1 ? parts.slice(0, -1).join('/') + '/' : '';
-          }
-        }
-        
-        details.innerHTML = `
-          <span class="file-name" title="${item.Key || ''}">${fileName || 'Unknown'}</span>
-          <span>${item.Size !== undefined ? formatSize(item.Size) : '-'}</span>
-          <span>${item.LastModified ? new Date(item.LastModified).toLocaleString() : '-'}</span>
-          <span>${item.ContentType || (item.isFolder ? 'Folder' : 'Unknown')}</span>
-          <span>${item.StorageClass || '-'}</span>
-        `;
-
-        // Add file or folder operation buttons
-        const actionsContainer = document.createElement('div');
-        actionsContainer.className = 'file-actions';
-        
-        if (item.isFolder) {
-          // Folder operations
-          // 1. Open
-          const openButton = document.createElement('button');
-          openButton.className = 'action-button';
-          openButton.title = 'Open folder';
-          openButton.innerHTML = '<i class="fa-solid fa-folder-open"></i>';
-          openButton.onclick = (e) => {
-            e.stopPropagation();
-            navigateTo(item.Key);
-          };
-          actionsContainer.appendChild(openButton);
-          
-          // 2. Copy Path
-          const copyPathButton = document.createElement('button');
-          copyPathButton.className = 'action-button';
-          copyPathButton.title = 'Copy S3 path';
-          copyPathButton.innerHTML = '<i class="fa-solid fa-copy"></i>';
-          copyPathButton.onclick = async (e) => {
-            e.stopPropagation();
-            try {
-              // 构建各云厂商各自的原生路径, 例如 s3:// / gs:// / oss://
-              const s3Path = storageObjectUri(currentConnection && currentConnection.type, currentBucket, item.Key);
-              
-              // 复制到剪贴板
-              await navigator.clipboard.writeText(s3Path);
-              
-              showNotification(`Path copied: ${s3Path}`, 'success');
-            } catch (error) {
-              console.error('Error copying path:', error);
-              showNotification(`Failed to copy path: ${error.message}`, 'error');
-            }
-          };
-          actionsContainer.appendChild(copyPathButton);
-          
-          // 3. Delete
-          const deleteButton = document.createElement('button');
-          deleteButton.className = 'action-button';
-          deleteButton.title = 'Delete folder';
-          deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
-          deleteButton.onclick = async (e) => {
-            e.stopPropagation();
-            if (confirm(`Are you sure you want to delete folder "${fileName}"? This action cannot be undone.`)) {
-              showLoading('Deleting folder...');
-              try {
-                await ipcRenderer.invoke('delete-object', currentConnection.id, item.Key, currentBucket, true);
-                showNotification(`Folder "${fileName}" deleted successfully`, 'success');
-                loadFiles(); // Reload file list
-              } catch (error) {
-                console.error('Error deleting folder:', error);
-                showNotification(`Failed to delete folder: ${error.message}`, 'error');
-              } finally {
-                hideLoading();
-              }
-            }
-          };
-          actionsContainer.appendChild(deleteButton);
-        } else {
-          // File operations
-          // 1. Preview (if supported)
-          const ext = item.Key.split('.').pop()?.toLowerCase();
-          const supportedPreview = ext && (
-            // Video formats
-            ext === 'mp4' || 
-            ext === 'mov' ||
-            ext === 'webm' ||
-            // Image formats
-            ext === 'jpg' || 
-            ext === 'jpeg' || 
-            ext === 'png' || 
-            ext === 'gif' || 
-            ext === 'webp' ||
-            ext === 'svg' ||
-            ext === 'bmp' ||
-            ext === 'ico' ||
-            ext === 'tiff' ||
-            ext === 'avif' ||
-            // Web formats
-            ext === 'html' ||
-            ext === 'htm' ||
-            // Microsoft Office formats
-            ext === 'doc' ||
-            ext === 'docx' ||
-            ext === 'xls' ||
-            ext === 'xlsx' ||
-            ext === 'ppt' ||
-            ext === 'pptx' ||
-            // Document formats
-            ext === 'pdf' ||
-            // Text formats
-            ext === 'txt' ||
-            ext === 'md' ||
-            ext === 'markdown' ||
-            ext === 'json' ||
-            ext === 'xml' ||
-            ext === 'yaml' ||
-            ext === 'yml' ||
-            ext === 'ini' ||
-            ext === 'csv' ||
-            ext === 'log'
-          );
-
-          if (supportedPreview) {
-            const previewButton = document.createElement('button');
-            previewButton.className = 'action-button';
-            previewButton.title = 'Preview';
-            previewButton.innerHTML = '<i class="fa-solid fa-eye"></i>';
-            previewButton.onclick = (e) => {
-              e.stopPropagation();
-              previewFile(item);
-            };
-            actionsContainer.appendChild(previewButton);
-          }
-          
-          // 2. Copy Path
-          const copyPathButton = document.createElement('button');
-          copyPathButton.className = 'action-button';
-          copyPathButton.title = 'Copy S3 path';
-          copyPathButton.innerHTML = '<i class="fa-solid fa-copy"></i>';
-          copyPathButton.onclick = async (e) => {
-            e.stopPropagation();
-            try {
-              // 构建各云厂商各自的原生路径, 例如 s3:// / gs:// / oss://
-              const s3Path = storageObjectUri(currentConnection && currentConnection.type, currentBucket, item.Key);
-              
-              // 复制到剪贴板
-              await navigator.clipboard.writeText(s3Path);
-              
-              showNotification(`Path copied: ${s3Path}`, 'success');
-            } catch (error) {
-              console.error('Error copying path:', error);
-              showNotification(`Failed to copy path: ${error.message}`, 'error');
-            }
-          };
-          actionsContainer.appendChild(copyPathButton);
-          
-          // 3. Download
-          const downloadButton = document.createElement('button');
-          downloadButton.className = 'action-button';
-          downloadButton.title = 'Download';
-          downloadButton.innerHTML = '<i class="fa-solid fa-download"></i>';
-          downloadButton.onclick = async (e) => {
-            e.stopPropagation(); // Prevent triggering the row click
-            try {
-              showLoading('Preparing download...');
-              
-              // 使用getObjectUrl获取下载链接
-              const downloadUrl = await getObjectUrl(currentConnection.id, currentBucket, item.Key, 'download');
-
-              // 校验链接后再触发下载，避免把 S3 的 XML 错误当成文件保存
-              await startVerifiedDownload(downloadUrl, item.Key.split('/').pop());
-
-              showNotification(`File "${fileName}" downloaded successfully`, 'success');
-            } catch (error) {
-              console.error('Error downloading file:', error);
-              showNotification(`Failed to download file: ${error.message}`, 'error');
-            } finally {
-              hideLoading();
-            }
-          };
-          actionsContainer.appendChild(downloadButton);
-          
-          // 4. Delete
-          const deleteButton = document.createElement('button');
-          deleteButton.className = 'action-button';
-          deleteButton.title = 'Delete';
-          deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
-          deleteButton.onclick = async (e) => {
-            e.stopPropagation();
-            if (confirm(`Are you sure you want to delete file "${fileName}"?`)) {
-              showLoading('Deleting file...');
-              try {
-                await ipcRenderer.invoke('delete-object', currentConnection.id, item.Key, currentBucket, false);
-                showNotification(`File "${fileName}" deleted successfully`, 'success');
-                loadFiles(); // Reload file list
-              } catch (error) {
-                console.error('Error deleting file:', error);
-                showNotification(`Failed to delete file: ${error.message}`, 'error');
-              } finally {
-                hideLoading();
-              }
-            }
-          };
-          actionsContainer.appendChild(deleteButton);
-          
-          // 4. Rename (left for extension, currently commented out)
-          /* Rename functionality needs backend support, not implemented
-          const renameButton = document.createElement('button');
-          renameButton.className = 'action-button';
-          renameButton.title = 'Rename';
-          renameButton.innerHTML = '<i class="fa-solid fa-pencil"></i>';
-          renameButton.onclick = (e) => {
-            e.stopPropagation();
-            // Rename logic, needs implementation
-          };
-          actionsContainer.appendChild(renameButton);
-          */
-        }
-        
-        details.appendChild(actionsContainer);
-
-        // Handle folder click for navigation
-        if (item.isFolder && item.Key) {
-          const handleFolderClick = (e) => {
-            // Only navigate if the click is not on the checkbox
-            if (!e.target.matches('input[type="checkbox"]')) {
-              navigateTo(item.Key);
-            }
-          };
-          div.onclick = handleFolderClick;
-          details.onclick = handleFolderClick;
-          icon.onclick = handleFolderClick;
-        } else if (item.Key) {
-          // Add click preview functionality for files
-          const ext = item.Key.split('.').pop()?.toLowerCase();
-          const supportedPreview = ext && [
-            // Video formats
-            'mp4', 'mov', 'webm', 
-            // Image formats
-            'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'avif',
-            // Web formats
-            'html', 'htm',
-            // Document formats
-            'pdf', 
-            // Text formats
-            'txt', 'md', 'markdown', 'json', 'xml', 'yaml', 'yml', 'ini', 'csv', 'log'
-          ].includes(ext);
-          
-          if (supportedPreview) {
-            const handleFileClick = (e) => {
-              // Only preview if the click is not on the checkbox or action buttons
-              if (!e.target.matches('input[type="checkbox"]') && 
-                  !e.target.closest('.action-button') &&
-                  !e.target.closest('.file-actions')) {
-                previewFile(item);
-              }
-            };
-            div.onclick = handleFileClick;
-            div.style.cursor = 'pointer';
-            details.onclick = handleFileClick;
-            icon.onclick = handleFileClick;
-          }
-        }
-        
-        div.appendChild(details);
-        fileList.appendChild(div);
-      });
-    } else {
-      // Handle unexpected result format
-      fileList.innerHTML = '<div class="file-item" style="justify-content: center; color: #6c757d;">No data available</div>';
+      if (!fileList.childElementCount) renderEmptyState('A little room for your next idea.', 'This folder is empty. Upload a file or create a folder to get started.', 'folder', { label: 'Upload files', run: uploadFile });
     }
+    header.querySelectorAll(':scope > *').forEach(cell => cell.setAttribute('role', 'columnheader'));
+    fileList.querySelectorAll('.file-item').forEach(row => {
+      row.querySelector('.file-details')?.setAttribute('role', 'presentation');
+      row.querySelectorAll(':scope > div:not(.file-details), .file-details > *').forEach(cell => cell.setAttribute('role', 'gridcell'));
+    });
+    updateColumnSortIcons();
+    filterFiles(document.getElementById('searchInput').value);
+    return true;
   } catch (error) {
-    console.error('Error loading files:', error);
-    
-    // Check if this is a region mismatch error
-    if (error.message && error.message.includes('Region mismatch')) {
-      // Extract the correct region from the error message if available
-      const expectedRegionMatch = error.message.match(/the bucket is in '([^']+)'/);
-      const expectedRegion = expectedRegionMatch ? expectedRegionMatch[1] : 'another region';
-      
-      // Display a more helpful error message with instructions
-      document.getElementById('fileList').innerHTML = `
-        <div class="file-item" style="justify-content: center; color: #dc3545;">
-          <div style="text-align: center; max-width: 600px; margin: 0 auto;">
-            <div style="font-weight: bold; margin-bottom: 10px; font-size: 16px;">Region Mismatch Error</div>
-            <div style="margin-bottom: 15px;">${error.message}</div>
-            <div style="margin-bottom: 15px;">
-              The region setting in your connection configuration does not match the actual region where your bucket is located.
-            </div>
-            <div style="font-weight: bold; color: #17a2b8;">
-              To fix this issue:
-              <ol style="text-align: left; margin-top: 5px;">
-                <li>Click on the connection in the sidebar</li>
-                <li>Click the edit (pencil) icon</li>
-                <li>Change the region to ${expectedRegion}</li>
-                <li>Save your connection</li>
-              </ol>
-            </div>
-          </div>
-        </div>
-      `;
-      
-      // Also show a notification
-      showNotification(`Region mismatch detected. Please edit your connection to use region: ${expectedRegion}`, 'error');
-    } else {
-      // Generic error message for other types of errors
-      document.getElementById('fileList').innerHTML = `
-        <div class="file-item" style="justify-content: center; color: #dc3545;">
-          <div style="text-align: center;">
-            <div style="font-weight: bold; margin-bottom: 5px;">Error loading files</div>
-            <div>${error.message || 'An unknown error occurred'}</div>
-          </div>
-        </div>
-      `;
-    }
+    if (generation !== fileLoadGeneration) return false;
+    loadedListing = null;
+    document.querySelector('.column-header').replaceChildren();
+    renderEmptyState('Couldn’t load this location', error.message || 'Check your connection and try again.', 'triangle-exclamation', { label: 'Try again', run: () => loadFiles() });
+    updateWorkspace();
+    return false;
   } finally {
-    hideLoading();
+    if (generation === fileLoadGeneration) { listingInProgress = false; hideLoading(); }
   }
 }
 
 function toggleFileSelection(key, isFolder) {
-  // Ensure folder keys end with '/'
-  const selectionKey = isFolder ? (key.endsWith('/') ? key : key + '/') : key;
-  if (selectedFiles.has(selectionKey)) {
-    selectedFiles.delete(selectionKey);
-  } else {
-    selectedFiles.add(selectionKey);
-  }
+  const selectionKey = isFolder && !key.endsWith('/') ? key + '/' : key;
+  selectedFiles.has(selectionKey) ? selectedFiles.delete(selectionKey) : selectedFiles.add(selectionKey);
+  selectionAnchor = selectionKey;
+  updateSelection();
 }
 
 function createFolder() {
@@ -2284,11 +1551,12 @@ function createFolder() {
     alert('Please select a connection and bucket first');
     return;
   }
-  document.getElementById('folderModal').style.display = 'block';
+  openDialog('folderModal');
+  document.querySelector('#folderForm input').focus();
 }
 
 function hideFolderModal() {
-  document.getElementById('folderModal').style.display = 'none';
+  closeDialog('folderModal');
   document.getElementById('folderForm').reset();
 }
 
@@ -2426,7 +1694,10 @@ async function getObjectUrl(connectionId, bucket, key, operation = 'download') {
 
 // 修改downloadSelected函数来使用新的getObjectUrl辅助函数
 async function downloadSelected() {
-  const selectedItems = getSelectedItems();
+  if (!currentConnection || !currentBucket) return;
+  const connectionId = currentConnection.id;
+  const bucket = currentBucket;
+  const selectedItems = [...selectedFiles].filter(key => !key.endsWith('/')).map(Key => ({ Key }));
   
   if (selectedItems.length === 0) {
     alert('Please select files to download');
@@ -2447,7 +1718,7 @@ async function downloadSelected() {
         console.log(`Preparing to download: ${key}`);
         
         // 使用getObjectUrl获取下载链接
-        const downloadUrl = await getObjectUrl(currentConnection.id, currentBucket, key, 'download');
+        const downloadUrl = await getObjectUrl(connectionId, bucket, key, 'download');
 
         // 校验链接后再触发下载
         await startVerifiedDownload(downloadUrl, key.split('/').pop());
@@ -2463,7 +1734,7 @@ async function downloadSelected() {
       if (downloadCount === 0) {
         showNotification('All downloads were cancelled', 'info');
       } else {
-        showNotification(`Successfully downloaded ${downloadCount} file(s)`, 'success');
+        showNotification(`Started ${downloadCount} download(s)`, 'success');
       }
     } else {
       const message = `Downloaded ${downloadCount} file(s)` +
@@ -2490,6 +1761,13 @@ async function deleteSelected() {
     return;
   }
 
+  // Snapshot the user's selection and its location before any asynchronous work.
+  const keys = [...selectedFiles];
+  const connectionId = currentConnection.id;
+  const bucket = currentBucket;
+  const prefix = currentPrefix;
+  const stillHere = () => currentConnection?.id === connectionId && currentBucket === bucket && currentPrefix === prefix;
+
   // Check if any folders are selected
   const hasFolder = Array.from(selectedFiles).some(key => key.endsWith('/'));
   const selectedCount = selectedFiles.size;
@@ -2498,13 +1776,16 @@ async function deleteSelected() {
     // Create and show folder deletion confirmation modal
     const folderConfirmModal = document.createElement('div');
     folderConfirmModal.className = 'modal';
+    folderConfirmModal.setAttribute('role', 'dialog');
+    folderConfirmModal.setAttribute('aria-modal', 'true');
+    folderConfirmModal.setAttribute('aria-labelledby', 'deleteDialogTitle');
     folderConfirmModal.style.display = 'flex';
     folderConfirmModal.innerHTML = `
       <div class="modal-content">
-        <h2>⚠️ Warning: Folder Deletion</h2>
+        <h2 id="deleteDialogTitle">Delete these items?</h2>
         <p>You are about to delete ${selectedCount} item(s) including folders. This action cannot be undone.</p>
         <p>To confirm deletion, please type "DELETE" below:</p>
-        <input type="text" id="folderDeleteConfirm" placeholder="Type DELETE here" autofocus>
+        <input type="text" id="folderDeleteConfirm" aria-label="Type DELETE to confirm" placeholder="Type DELETE here" autofocus>
         <div class="modal-buttons">
           <button id="cancelFolderDelete">Cancel</button>
           <button id="confirmFolderDelete" disabled>Delete</button>
@@ -2536,10 +1817,10 @@ async function deleteSelected() {
             let deleteCount = 0;
             let errorCount = 0;
             
-            for (const key of selectedFiles) {
+            for (const key of keys) {
               try {
                 const isFolder = key.endsWith('/');
-                const result = await ipcRenderer.invoke('delete-object', currentConnection.id, key, currentBucket, isFolder);
+                const result = await ipcRenderer.invoke('delete-object', connectionId, key, bucket, isFolder);
                 deleteCount++;
                 if (result.message) {
                   console.log(result.message);
@@ -2575,7 +1856,7 @@ async function deleteSelected() {
         };
       });
     } finally {
-      await loadFiles();
+      if (stillHere()) await loadFiles();
     }
   } else {
     // Regular file deletion confirmation
@@ -2587,9 +1868,9 @@ async function deleteSelected() {
       let deleteCount = 0;
       let errorCount = 0;
       
-      for (const key of selectedFiles) {
+      for (const key of keys) {
         try {
-          await ipcRenderer.invoke('delete-object', currentConnection.id, key, currentBucket, false);
+          await ipcRenderer.invoke('delete-object', connectionId, key, bucket, false);
           deleteCount++;
         } catch (error) {
           console.error('Error deleting file:', error);
@@ -2606,7 +1887,7 @@ async function deleteSelected() {
         showNotification(`Deleted ${deleteCount} file(s), failed to delete ${errorCount} file(s)`, 'info');
       }
       
-      loadFiles();
+      if (stillHere()) loadFiles();
     } finally {
       hideButtonLoading('deleteButton');
     }
@@ -2630,32 +1911,19 @@ document.addEventListener('drop', (e) => {
 });
 
 // Notification system
+let notificationTimer;
 function showNotification(message, type = 'success') {
+  clearTimeout(notificationTimer);
   const notification = document.getElementById('notification');
-  const notificationMessage = document.getElementById('notificationMessage');
-  
-  // Set message
-  notificationMessage.textContent = message;
-  
-  // Set color based on type
-  if (type === 'success') {
-    notification.style.backgroundColor = '#28a745';
-  } else if (type === 'error') {
-    notification.style.backgroundColor = '#dc3545';
-  } else if (type === 'info') {
-    notification.style.backgroundColor = '#17a2b8';
-  }
-  
-  // Show notification
-  notification.style.display = 'block';
-  
-  // Auto hide after 5 seconds
-  setTimeout(hideNotification, 5000);
+  document.getElementById('notificationMessage').textContent = message;
+  notification.dataset.tone = type;
+  document.getElementById('notificationIcon').className = `fa-solid fa-${type === 'error' ? 'triangle-exclamation' : type === 'info' ? 'circle-info' : 'check-circle'}`;
+  notification.style.display = 'flex';
+  notificationTimer = setTimeout(hideNotification, type === 'error' ? 8000 : 4500);
 }
-
 function hideNotification() {
-  const notification = document.getElementById('notification');
-  notification.style.display = 'none';
+  clearTimeout(notificationTimer);
+  document.getElementById('notification').style.display = 'none';
 }
 
 async function previewFile(file) {
@@ -2712,35 +1980,11 @@ async function renderPreview(file, result) {
   const fileExtension = file.Key.split('.').pop().toLowerCase();
   
   if (result.type === 'text') {
-    // 处理文本文件...
-    let content = result.content;
-    let language = '';
-    
-    // Add basic syntax highlighting for markdown
-    if (['md', 'markdown'].includes(fileExtension)) {
-      // Simple markdown highlighting
-      content = content
-        // Headers
-        .replace(/^(#{1,6})\s(.+)$/gm, '<span style="color: #0d6efd;">$1</span> <span style="color: #0d6efd; font-weight: bold;">$2</span>')
-        // Bold
-        .replace(/\*\*(.+?)\*\*/g, '<span style="font-weight: bold;">$1</span>')
-        // Italic
-        .replace(/\*(.+?)\*/g, '<span style="font-style: italic;">$1</span>')
-        // Code blocks
-        .replace(/```[\s\S]+?```/g, match => `<span style="color: #d63384;">${match}</span>`)
-        // Inline code
-        .replace(/`(.+?)`/g, '<span style="color: #d63384; background: #f8f9fa; padding: 0 4px; border-radius: 3px;">$1</span>')
-        // Links
-        .replace(/\[(.+?)\]\((.+?)\)/g, '<span style="color: #0d6efd;">[$1]($2)</span>')
-        // Lists
-        .replace(/^(\s*[-*+]|\d+\.)\s/gm, '<span style="color: #198754;">$1 </span>');
-    }
-    
-    previewContent.innerHTML = `
-      <div style="height: 100%; overflow: auto; background: white;">
-        <pre style="white-space: pre-wrap; word-wrap: break-word; padding: 20px; margin: 0; font-size: 14px; line-height: 1.5; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;">${content}</pre>
-      </div>
-    `;
+    const pre = document.createElement('pre');
+    pre.className = 'preview-text';
+    pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;padding:24px;margin:0;font:12px/1.8 ui-monospace,monospace;min-height:100%';
+    pre.textContent = result.content;
+    previewContent.appendChild(pre);
   } else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'avif'].includes(fileExtension)) {
     // Image preview
     previewContent.innerHTML = `
@@ -2876,7 +2120,8 @@ async function renderPreview(file, result) {
   }
   
   // Show preview modal
-  previewModal.style.display = 'block';
+  document.getElementById('previewTitle').textContent = file.Key;
+  openDialog('previewModal');
   hideLoading();
 }
 
@@ -2937,7 +2182,8 @@ function getFileIconForExtension(extension) {
 
 // Add hide preview function
 function hidePreview() {
-  document.getElementById('previewModal').style.display = 'none';
+  closeDialog('previewModal');
+  document.getElementById('previewContent').replaceChildren();
 }
 
 // Helper function to download a file with the correct content-disposition
@@ -2977,7 +2223,7 @@ document.addEventListener('DOMContentLoaded', () => {
       target.tagName === 'SELECT' ||
       target.isContentEditable
     );
-    if (typing) return;
+    if (typing || [...document.querySelectorAll('.modal, .preview-modal')].some(el => getComputedStyle(el).display !== 'none')) return;
     if (e.altKey && e.key === 'ArrowLeft') {
       e.preventDefault();
       navigateUp();
@@ -3069,13 +2315,6 @@ function updateColumnSortIcons() {
   });
 }
 
-// 在加载文件后更新排序图标
-const originalLoadFiles = loadFiles;
-loadFiles = async function() {
-  await originalLoadFiles.apply(this, arguments);
-  updateColumnSortIcons();
-};
-
 // Also call this function directly to ensure it's applied immediately
 initializeDirectEventListeners();
 
@@ -3083,5 +2322,3 @@ initializeDirectEventListeners();
 window.downloadFile = downloadFile;
 window.changeSortField = changeSortField;
 window.toggleSortDirection = toggleSortDirection;
-
-

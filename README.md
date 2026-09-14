@@ -2,9 +2,14 @@
 
 Cross-platform desktop application for browsing and managing files across multiple cloud object storage services.
 
-UI:
-![Screenshot 1](image.png)
-![Screenshot 2](image-1.png)
+## Interface
+
+A quiet, keyboard-friendly workspace with light, dark, and system appearance.
+Single-click to select, double-click to open, and use `Cmd/Ctrl K` for commands.
+
+![OBrowser workspace (synthetic demo data)](docs/screenshots/workspace-light.png)
+
+See the [UI design notes and previews](docs/ui-design.md) for the design references, interaction model, and verification steps.
 
 ## Supported Cloud Storage Services
 
@@ -103,7 +108,14 @@ If you specifically want an access-key/secret pair for GCS, those are "HMAC keys
 - **Download Files**: Select files and click the download button
 - **Create Folders**: Create new folders in the current directory
 - **Delete Files/Folders**: Select items and click the delete button
-- **Preview Files**: Click the preview button to view supported files (images, text, PDFs, etc.)
+- **Preview Files**: Double-click a file, press Space on its focused row, or use its preview button.
+- **Select Files**: Click to select, Shift-click for a range, or Cmd/Ctrl-click to add to a selection.
+- **Filter**: Cmd/Ctrl+F filters the current location. It does not search across buckets.
+- **Commands**: Cmd/Ctrl+K finds available actions and saved connections.
+
+### UI Verification
+
+Run `npm run test:ui` for isolated Electron interaction tests and screenshots. This uses synthetic in-memory storage and a temporary profile, never your real saved connections. Run `npm run test:ui -- --update-screenshots` to regenerate the checked-in design previews.
 
 ## Extending for Additional Storage Providers
 
