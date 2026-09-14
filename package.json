@@ -1,6 +1,6 @@
 {
   "name": "obrowser",
-  "version": "0.0.6",
+  "version": "1.0.0",
   "description": "Cross-platform Object Storage Browser desktop application",
   "main": "main.js",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "build:mac": "dotenv -e .env -- electron-builder --mac",
-    "build:mac:no-notarize": "electron-builder --mac",
+    "build:mac:no-notarize": "electron-builder --mac -c.mac.notarize=false",
     "build:linux": "electron-builder --linux",
     "test": "jest",
     "emulator:azure": "azurite-blob --silent --location .azurite --blobHost 127.0.0.1 --blobPort 10000",
