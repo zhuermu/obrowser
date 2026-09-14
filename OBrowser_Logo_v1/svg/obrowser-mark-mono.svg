@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">OBrowser — monochrome</title>
+  <desc id="desc">An open O and one object, in a single ink.</desc>
+  <g fill="#12182B">
+    <path d="M224 128A96 96 0 1 1 128 32A16 16 0 0 1 128 64A64 64 0 1 0 192 128A16 16 0 0 1 224 128Z"/>
+    <rect x="168" y="40" width="48" height="48" rx="10"/>
+  </g>
+</svg>

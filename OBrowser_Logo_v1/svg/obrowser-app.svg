@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">OBrowser — application icon</title>
+  <desc id="desc">White O and object on a flat blue rounded-square tile.</desc>
+  <rect width="512" height="512" rx="112" fill="#3558F5"/>
+  <g transform="translate(64 64) scale(1.5)" fill="#FFFFFF">
+    <path d="M224 128A96 96 0 1 1 128 32A16 16 0 0 1 128 64A64 64 0 1 0 192 128A16 16 0 0 1 224 128Z"/>
+    <rect x="168" y="40" width="48" height="48" rx="10"/>
+  </g>
+</svg>

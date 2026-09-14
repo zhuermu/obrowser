@@ -1,0 +1,46 @@
+{
+  "checks": [
+    {
+      "label": "light-736",
+      "viewport": 736,
+      "scrollWidth": 736,
+      "images": true,
+      "background": "rgb(245, 246, 251)",
+      "height": 532
+    },
+    {
+      "label": "monochrome-interaction",
+      "viewport": 736,
+      "scrollWidth": 736,
+      "images": true,
+      "background": "rgb(245, 246, 251)",
+      "height": 532
+    },
+    {
+      "label": "dark-736",
+      "viewport": 736,
+      "scrollWidth": 736,
+      "images": true,
+      "background": "rgb(21, 27, 44)",
+      "height": 532
+    },
+    {
+      "label": "dark-320",
+      "viewport": 320,
+      "scrollWidth": 320,
+      "images": true,
+      "background": "rgb(21, 27, 44)",
+      "height": 379.71875
+    },
+    {
+      "label": "light-320",
+      "viewport": 320,
+      "scrollWidth": 320,
+      "images": true,
+      "background": "rgb(245, 246, 251)",
+      "height": 379.71875
+    }
+  ],
+  "scriptErrors": [],
+  "tweakVerified": true
+}

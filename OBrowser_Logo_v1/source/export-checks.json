@@ -1,0 +1,152 @@
+[
+  {
+    "file": "png/obrowser-app-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-app-256.png",
+    "width": 256,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-app-512.png",
+    "width": 512,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-color-1920.png",
+    "width": 1920,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-color-960.png",
+    "width": 960,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-mono-1920.png",
+    "width": 1920,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-mono-960.png",
+    "width": 960,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-stacked-1920.png",
+    "width": 1920,
+    "height": 1600,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-stacked-960.png",
+    "width": 960,
+    "height": 800,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-white-1920.png",
+    "width": 1920,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-lockup-white-960.png",
+    "width": 960,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-256.png",
+    "width": 256,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-512.png",
+    "width": 512,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-mono-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-mono-256.png",
+    "width": 256,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-mono-512.png",
+    "width": 512,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-white-1024.png",
+    "width": 1024,
+    "height": 1024,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-white-256.png",
+    "width": 256,
+    "height": 256,
+    "alpha": true
+  },
+  {
+    "file": "png/obrowser-mark-white-512.png",
+    "width": 512,
+    "height": 512,
+    "alpha": true
+  },
+  {
+    "file": "favicon/obrowser-favicon-16.png",
+    "width": 16,
+    "height": 16,
+    "alpha": true
+  },
+  {
+    "file": "favicon/obrowser-favicon-24.png",
+    "width": 24,
+    "height": 24,
+    "alpha": true
+  },
+  {
+    "file": "favicon/obrowser-favicon-32.png",
+    "width": 32,
+    "height": 32,
+    "alpha": true
+  },
+  {
+    "file": "favicon/obrowser-favicon-48.png",
+    "width": 48,
+    "height": 48,
+    "alpha": true
+  },
+  {
+    "file": "favicon/obrowser-favicon-64.png",
+    "width": 64,
+    "height": 64,
+    "alpha": true
+  }
+]

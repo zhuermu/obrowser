@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">OBrowser</title>
+  <desc id="desc">An open circular O and one rounded square object. Flat blue and violet.</desc>
+  <path fill="#3558F5" d="M224 128A96 96 0 1 1 128 32A16 16 0 0 1 128 64A64 64 0 1 0 192 128A16 16 0 0 1 224 128Z"/>
+  <rect x="168" y="40" width="48" height="48" rx="10" fill="#7448F5"/>
+</svg>
