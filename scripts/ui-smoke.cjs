@@ -194,7 +194,7 @@ app.whenReady().then(async () => {
     if (process.argv.includes('--update-screenshots')) {
       const gallery = path.join(__dirname, '..', 'docs', 'screenshots');
       fs.mkdirSync(gallery, { recursive: true });
-      for (const [source, destination] of [['03-objects-light', 'workspace-light'], ['04-objects-dark', 'workspace-dark'], ['09-connection', 'connection'], ['08-commands', 'commands']]) {
+      for (const [source, destination] of [['02-buckets', 'buckets'], ['03-objects-light', 'workspace-light'], ['04-objects-dark', 'workspace-dark'], ['09-connection', 'connection'], ['10-gcs-connection', 'connection-gcs'], ['08-commands', 'commands']]) {
         fs.copyFileSync(path.join(output, `${source}.png`), path.join(gallery, `${destination}.png`));
       }
     }

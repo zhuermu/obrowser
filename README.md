@@ -5,9 +5,52 @@ Cross-platform desktop application for browsing and managing files across multip
 ## Interface
 
 A quiet, keyboard-friendly workspace with light, dark, and system appearance.
-Single-click to select, double-click to open, and use `Cmd/Ctrl K` for commands.
+Single-click to select, double-click to open, and `Cmd/Ctrl K` for commands.
 
-![OBrowser workspace (synthetic demo data)](docs/screenshots/workspace-light.png)
+All screenshots below use synthetic demo data, never a real account.
+
+### Four clouds, one sidebar
+
+![Bucket list with four connections in the sidebar](docs/screenshots/buckets.png)
+
+S3, GCS, Azure Blob and Aliyun OSS sit side by side; switching is a single click.
+The bucket list carries the provider and creation date, and an S3 connection's
+region can be changed from the header without reopening the connection.
+
+### The object list is the same everywhere
+
+![Object list with breadcrumbs, sortable columns and per-row actions](docs/screenshots/workspace-light.png)
+
+`Cmd/Ctrl F` filters the current folder, Space previews the focused row, and
+double-click enters a folder. Sort by name, size or modified date; select several
+rows to download or delete them in one go. Filtering deselects hidden rows, so a
+bulk delete cannot reach an object you cannot see.
+
+### Cmd/Ctrl K goes anywhere
+
+![Command palette listing actions and saved connections](docs/screenshots/commands.png)
+
+The palette lists both actions and every saved connection, so moving from a
+folder in one cloud to a bucket in another is two keystrokes rather than four
+clicks. Only currently available actions are offered.
+
+### Dark mode is a full theme
+
+![The same object list in the dark theme](docs/screenshots/workspace-dark.png)
+
+Not a dimmed background. Switch it bottom-left or search for "appearance" in the
+command palette; light, dark and follow-system are stored locally.
+
+### Credentials are asked for the way each cloud issues them
+
+![New connection dialog with Google GCS selected](docs/screenshots/connection-gcs.png)
+
+GCS asks for a service account JSON key file or ADC, S3 takes access keys, STS
+session tokens or a local AWS profile, Azure wants an account name and key, OSS
+an AccessKey pair. Endpoint, region and starting location are tucked under
+Advanced, so the common case stays short. Because the endpoint is a text field
+rather than a fixed list, S3-compatible services such as MinIO and Cloudflare R2
+connect as S3.
 
 See the [UI design notes and previews](docs/ui-design.md) for the design references, interaction model, and verification steps.
 
@@ -33,29 +76,107 @@ See the [UI design notes and previews](docs/ui-design.md) for the design referen
 
 ### Prerequisites
 
-- Node.js 14+ and npm
+- **Node.js 18+ and npm.** Electron 28 bundles its own Node 18 at runtime, so the
+  system version only matters for building and testing.
+- **macOS release builds** additionally need Xcode command line tools (for
+  `codesign`, `iconutil` and `notarytool`) and an Apple Developer Program
+  membership. See [Signing and notarization](#signing-and-notarization).
 
 ### Building from Source
 
 1. Clone the repository
-```
-git clone https://github.com/yourusername/s3browser.git
-cd s3browser
+```bash
+git clone https://github.com/zhuermu/obrowser.git
+cd obrowser
 ```
 
 2. Install dependencies
+```bash
+npm install
 ```
+
+npm 11 does not run dependency install scripts unless they are approved, and
+Electron downloads its binary from one. If `npm start` then fails with a missing
+Electron executable, approve it and reinstall:
+
+```bash
+npm install-scripts approve electron
 npm install
 ```
 
 3. Start the application in development mode
-```
+```bash
 npm start
 ```
 
 4. Build for your platform
+```bash
+npm run build:mac          # dmg + zip, x64 and arm64; signs and notarizes
+npm run build:mac:no-notarize   # same without notarization, for local testing
+npm run build:win          # portable + zip, x64
+npm run build:linux        # AppImage, x64
 ```
-npm run build
+
+Artifacts are written to `dist/`.
+
+Cross-building has limits worth knowing before you try: from macOS the Windows
+`zip` target works, but `portable` is NSIS-based and needs Wine. AppImage
+likewise expects Linux tooling or a container. Build each platform on that
+platform, or in CI, when you need the installer formats.
+
+### Signing and notarization
+
+macOS builds are signed with a Developer ID certificate and notarized by Apple,
+because since Catalina an app downloaded from a website is blocked by Gatekeeper
+unless it is notarized — a Developer ID signature alone is not enough.
+
+`package.json` already sets `mac.identity`, `hardenedRuntime`, the entitlements
+and `mac.notarize.teamId`. What is not in the repository is the credential:
+
+```bash
+cp .env.example .env
+# APPLE_ID=your-apple-id@example.com
+# APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx   (appleid.apple.com)
+```
+
+`.env` is gitignored. `npm run build:mac` loads it; each architecture takes
+roughly five minutes end to end, of which notarization is two to four.
+
+If `notarytool` returns `403 A required agreement is missing or has expired`, the
+credentials are fine — the Account Holder has to accept the updated Apple
+Developer Program License Agreement at developer.apple.com/account. It takes a
+few minutes to propagate afterwards.
+
+Verify a finished build with:
+
+```bash
+spctl -a -vvv -t install "dist/mac-arm64/OBrowser.app"   # expect: accepted, source=Notarized Developer ID
+xcrun stapler validate "dist/mac-arm64/OBrowser.app"     # expect: The validate action worked
+```
+
+### App icons
+
+`obrowser.icns`, `obrowser.ico` and `obrowser.png` are generated from the brand
+SVGs in `OBrowser_Logo_v1/`:
+
+```bash
+npm run icons
+```
+
+### Tests
+
+```bash
+npm test          # unit and integration suites
+npm run test:ui   # isolated Electron interaction tests and screenshots
+```
+
+Azure and GCS have end-to-end suites that run against emulators and skip
+themselves when none is listening, so `npm test` stays green without them. To
+include them:
+
+```bash
+npm run emulator:azure   # Azurite on 127.0.0.1:10000
+npm run emulator:gcs     # fake-gcs-server on 127.0.0.1:4443, needs Docker
 ```
 
 ## Usage
