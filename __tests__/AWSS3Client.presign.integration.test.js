@@ -49,6 +49,26 @@ test('a us-east-1 bucket keeps using the base client', async () => {
   expect(await s3.getClientForBucket('obrowser-virginia')).toBe(s3.client);
 });
 
+test('Chinese download names produce an ASCII response override with a UTF-8 filename', async () => {
+  const s3 = new AWSS3Client();
+  await s3.initialize(CONFIG);
+  bucketRegionCache.set('obrowser-singapore', 'ap-southeast-1');
+  const filename = '沉淀物料包_MiniMax-H3竖屏短剧.tar.gz';
+  const key = `h3-portrait-p1/${filename}`;
+  const parsed = new URL(await s3.getObjectUrl('obrowser-singapore', key, 'download'));
+
+  expect(parsed.hostname).toBe('obrowser-singapore.s3.ap-southeast-1.amazonaws.com');
+  expect(decodeURIComponent(parsed.pathname)).toBe(`/${key}`);
+  expect(parsed.searchParams.get('X-Amz-Credential')).toContain('/ap-southeast-1/s3/aws4_request');
+  const disposition = parsed.searchParams.get('response-content-disposition');
+  // URLSearchParams removes only the URL encoding; the actual header value
+  // must still be ASCII, with UTF-8 percent-encoding inside filename*.
+  expect(disposition).toMatch(/^[\x20-\x7e]+$/);
+  expect(disposition).toContain('filename="______MiniMax-H3____.tar.gz"');
+  expect(decodeURIComponent(disposition.split("filename*=UTF-8''")[1])).toBe(filename);
+  expect(parsed.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+});
+
 test('view URLs (preview) are signed for the bucket region too', async () => {
   const s3 = new AWSS3Client();
   await s3.initialize(CONFIG);

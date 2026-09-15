@@ -92,8 +92,10 @@ describe('GCS V4 signed URLs', () => {
     const parsed = new URL(await gcs.getObjectUrl(BUCKET, key, 'download'));
 
     expect(decodeURIComponent(parsed.pathname)).toBe(`/${BUCKET}/${key}`);
-    expect(parsed.searchParams.get('response-content-disposition'))
-      .toBe('attachment; filename="中文 file.mp4"');
+    const disposition = parsed.searchParams.get('response-content-disposition');
+    expect(disposition).toMatch(/^[\x20-\x7e]+$/);
+    expect(disposition).toContain('filename="__ file.mp4"');
+    expect(decodeURIComponent(disposition.split("filename*=UTF-8''")[1])).toBe('中文 file.mp4');
   });
 
   test('a key file on disk signs identically to inline JSON', async () => {

@@ -225,7 +225,7 @@ If you specifically want an access-key/secret pair for GCS, those are "HMAC keys
 ### File Operations
 
 - **Browse Folders**: Double-click folders to navigate in and out of directories
-- **Upload Files**: Select files from your computer to upload to the current folder
+- **Upload Files**: Select files from your computer to upload to the current folder. A collapsible **Uploads** panel shows every file, its destination, transferred bytes, percentage, and queued/completed/failed status. You can keep browsing or add more files while uploading; each batch keeps its original destination. Failed files retain their error details, and **Clear finished** removes only finished entries. Keep the app open until uploads complete; this queue is session-only.
 - **Download Files**: Select files and click the download button
 - **Create Folders**: Create new folders in the current directory
 - **Delete Files/Folders**: Select items and click the delete button

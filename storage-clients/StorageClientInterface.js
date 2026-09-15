@@ -3,7 +3,27 @@
  * This interface defines the common methods that all storage client implementations must provide.
  */
 
+const fs = require('fs');
+
 class StorageClientInterface {
+  /** Upload a local file without buffering the whole file in memory.
+   * @param {Object} options - contentLength and onProgress(loadedBytes)
+   */
+  async uploadFile(bucket, key, filePath, options = {}) {
+    const body = fs.createReadStream(filePath);
+    // Some providers resolve credentials/regions before consuming the stream.
+    // Hold a read error until the consumer is ready; never leave it unhandled.
+    let readError;
+    body.on('error', error => { readError = error; });
+    try {
+      const result = await this.uploadObject(bucket, key, body, options);
+      if (readError) throw readError;
+      return result;
+    } finally {
+      body.destroy();
+    }
+  }
+
   /**
    * List all buckets/containers available in the account
    * @returns {Promise<Array>} List of buckets/containers
@@ -27,9 +47,10 @@ class StorageClientInterface {
    * @param {string} bucket - Bucket/container name
    * @param {string} key - Object key/path
    * @param {Buffer|Readable} body - Object content
+   * @param {Object} options - Optional contentLength and onProgress(loadedBytes)
    * @returns {Promise<Object>} Result of the upload operation
    */
-  async uploadObject(bucket, key, body) {
+  async uploadObject(bucket, key, body, options = {}) {
     throw new Error('Method not implemented');
   }
 
@@ -94,4 +115,4 @@ class StorageClientInterface {
   }
 }
 
-module.exports = StorageClientInterface; 
+module.exports = StorageClientInterface;

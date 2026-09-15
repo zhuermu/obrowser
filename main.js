@@ -5,6 +5,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const { fromIni } = require('@aws-sdk/credential-providers');
 const { verifyDownloadUrl } = require('./download-verifier');
+const { createUploadHandler } = require('./upload-progress');
 const { parseResolvedProxy, chooseProxy, applyNetworkConfig } = require('./network-config');
 const {
   listAwsProfiles,
@@ -612,33 +613,7 @@ ipcMain.handle('gcloud-adc-login', async () => {
   return runLoginCommand(cli, ['auth', 'application-default', 'login', '--quiet']);
 });
 
-ipcMain.handle('upload-object', async (event, connectionId, bucket, key, filePath) => {
-  try {
-    const connections = store.get('connections', []);
-    const connection = connections.find(conn => conn.id === connectionId);
-    
-    if (!connection) {
-      console.error(`Connection not found with ID: ${connectionId}`);
-      throw new Error('Connection not found');
-    }
-    
-    console.log(`Uploading file to: ${bucket}/${key}`);
-    console.log(`Connection: ${connection.name} (ID: ${connectionId})`);
-    console.log(`Connection type: ${connection.type}, Region: ${connection.region}`);
-    console.log(`File path: ${filePath}`);
-    
-    // Read the file content
-    const fileContent = fs.readFileSync(filePath);
-    
-    const client = await getStorageClient(connectionId);
-    await client.uploadObject(bucket, key, fileContent);
-    console.log('Upload completed successfully');
-    return { success: true };
-  } catch (error) {
-    console.error('Error uploading object:', error);
-    throw error;
-  }
-});
+ipcMain.handle('upload-object', createUploadHandler({ getStorageClient }));
 
 ipcMain.handle('create-folder', async (event, connectionId, bucket, folderPath) => {
   try {

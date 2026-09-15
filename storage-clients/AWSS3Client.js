@@ -14,8 +14,10 @@ const {
   GetBucketLocationCommand
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { Upload } = require('@aws-sdk/lib-storage');
 const { fromIni } = require('@aws-sdk/credential-providers');
 const StorageClientInterface = require('./StorageClientInterface');
+const { downloadContentDisposition } = require('../content-disposition');
 
 /**
  * Detect if an endpoint URL is a standard AWS S3 endpoint. Standard endpoints
@@ -501,15 +503,30 @@ class AWSS3Client extends StorageClientInterface {
    * @param {Buffer|Readable} body - Object content
    * @returns {Promise<Object>} Result of the upload operation
    */
-  async uploadObject(bucket, key, body) {
+  async uploadObject(bucket, key, body, options = {}) {
     const client = await this.getClientForBucket(bucket);
-    const command = new PutObjectCommand({
+    const params = {
       Bucket: bucket,
       Key: key,
-      Body: body
-    });
+      Body: body,
+      ...(Number.isFinite(options.contentLength) ? { ContentLength: options.contentLength } : {})
+    };
 
-    const response = await client.send(command);
+    if (options.onProgress || typeof body?.pipe === 'function') {
+      const upload = new Upload({
+        client,
+        params,
+        queueSize: 2,
+        // Keep memory bounded and stay below S3's 10,000-part limit.
+        partSize: Math.max(8 * 1024 * 1024, Math.ceil((options.contentLength || 0) / 10000)),
+        leavePartsOnError: false
+      });
+      upload.on('httpUploadProgress', progress => options.onProgress?.(progress.loaded));
+      const response = await upload.done();
+      return { success: true, response };
+    }
+
+    const response = await client.send(new PutObjectCommand(params));
     return { success: true, response };
   }
 
@@ -577,7 +594,7 @@ class AWSS3Client extends StorageClientInterface {
       // For 'view' operations, don't set ContentDisposition
       // For 'download', set it to attachment with the filename
       ...(operation === 'download' ? {
-        ResponseContentDisposition: `attachment; filename="${key.split('/').pop()}"`
+        ResponseContentDisposition: downloadContentDisposition(key)
       } : 
       // For PDFs specifically in view mode, set Content-Type to application/pdf
       (isPdf && operation === 'view') ? {

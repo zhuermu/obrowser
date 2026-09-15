@@ -36,6 +36,22 @@ const mutations = [];
 const downloadChecks = [];
 const errors = [];
 const externalRequests = [];
+const uploads = [];
+
+ipcMain.handle('upload-object', (event, ...args) => new Promise((resolve, reject) => {
+  uploads.push({ event, args, resolve, reject });
+}));
+
+const waitForUploadCount = async count => {
+  const deadline = Date.now() + 3000;
+  while (uploads.length < count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(uploads.length, count, `expected ${count} upload requests`);
+};
+
+const uploadProgress = (index, loaded, total, status = 'uploading') => {
+  const upload = uploads[index];
+  upload.event.sender.send('upload-progress', { uploadId: upload.args[4], loaded, total, status });
+};
 
 ipcMain.handle('get-connections', () => saved);
 ipcMain.handle('save-connections', (_, next) => { saved = next; });
@@ -189,6 +205,106 @@ app.whenReady().then(async () => {
     win.setSize(1600, 960);
     await shot('15-wide-window');
     await check('large windows reveal secondary metadata without overflow', 'return getComputedStyle(document.querySelector(".file-details > span:nth-child(4)")).display !== "none" && document.querySelector(".file-item").scrollWidth <= document.querySelector(".file-item").clientWidth;');
+
+    // Exercise the real picker callback, queue and IPC listener with synthetic
+    // files and manually controlled cloud responses. No disk/cloud uploads.
+    win.setSize(1280, 840);
+    await run('await selectConnection(workspaceConnections[0]); currentBucket = "studio-assets"; currentPrefix = "releases/"; await loadFiles();');
+    await run(`
+      const click = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function() { window.fixturePicker = this; };
+      try { await uploadFile(); } finally { HTMLInputElement.prototype.click = click; }
+      fixturePicker.onchange({ target: { files: [] } });
+    `);
+    await check('cancelling the picker creates no upload tasks', 'return uploadTasks.size === 0 && document.getElementById("uploadPanel").hidden;');
+    // Keep the picker captured at the S3 destination, but browse elsewhere
+    // before selecting the synthetic files.
+    await run('await selectConnection(workspaceConnections[1]);');
+    const listingsBeforeUploads = listingCalls;
+    await run(`
+      window.fixtureBatch = fixturePicker.onchange({ target: { files: [
+        { name: 'launch-film <draft> & final.mp4', path: '/fixture/movie.mp4', size: 2147483648 },
+        { name: 'workspace-backup.zip', path: '/fixture/backup.zip', size: 629145600 },
+        { name: 'empty.txt', path: '/fixture/empty.txt', size: 0 }
+      ] } });
+    `);
+    await waitForUploadCount(1);
+    assert.deepEqual(uploads[0].args.slice(0, 4), ['s3-demo', 'studio-assets', 'releases/launch-film <draft> & final.mp4', '/fixture/movie.mp4']);
+    await check('all selected files appear immediately, including queued files', `return !document.getElementById('uploadPanel').hidden && uploadTasks.size === 3 && document.querySelectorAll('.upload-item[data-status="queued"]').length === 2;`);
+    await check('upload toggle has a local chevron icon', `return document.querySelector('.upload-chevron svg path').getAttribute('d') === 'm5 9 7 7 7-7';`);
+    await check('file names are text and destinations stay bound to the picker location', `return document.querySelector('.upload-file-name').textContent === 'launch-film <draft> & final.mp4' && !document.querySelector('.upload-file-name draft') && document.querySelector('.upload-destination').textContent.includes('s3://studio-assets/releases/');`);
+    uploadProgress(0, 1073741824, 2147483648);
+    await check('IPC progress displays per-file percentage and transferred bytes', `return document.querySelector('.upload-percent').textContent === '50%' && document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '50' && document.querySelector('.upload-bytes').textContent === '1.00 GB / 2.00 GB';`);
+    await shot('16-uploads-light');
+    await run('themePreference = "dark"; applyTheme();');
+    await shot('17-uploads-dark');
+    win.setSize(980, 640);
+    await shot('18-uploads-small');
+    await check('upload panel is bounded and scrollable at the minimum window size', `
+      const panel = document.getElementById('uploadPanel');
+      const list = document.getElementById('uploadList');
+      return panel.getBoundingClientRect().bottom <= innerHeight && panel.getBoundingClientRect().top > 57
+        && list.scrollHeight > list.clientHeight && panel.scrollWidth <= panel.clientWidth
+        && document.querySelector('.browser-surface').clientHeight > 80;
+    `);
+    await run('document.getElementById("uploadPanelToggle").click();');
+    uploadProgress(0, 1610612736, 2147483648);
+    await check('collapsing keeps uploads running and their summary visible', `return document.getElementById('uploadList').hidden && document.getElementById('uploadSummary').textContent === '1 uploading · 2 queued' && document.querySelector('.upload-percent').textContent === '75%';`);
+    await run('document.getElementById("uploadPanelToggle").click(); document.getElementById("clearUploadsButton").click();');
+    await check('active and queued uploads cannot be cleared', 'return uploadTasks.size === 3;');
+    // A new picker may append another destination without running a second
+    // upload worker or changing the first batch's target.
+    await run(`
+      const click = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function() { window.extraPicker = this; };
+      try { await uploadFile(); } finally { HTMLInputElement.prototype.click = click; }
+      extraPicker.onchange({ target: { files: [{ name: 'notes.txt', path: '/fixture/notes.txt', size: 120 }] } });
+    `);
+    await check('adding files during an upload appends to the same queue', `return uploadTasks.size === 4 && document.querySelectorAll('.upload-item[data-status="queued"]').length === 3;`);
+    assert.equal(uploads.length, 1, 'only one file is in flight');
+    uploadProgress(0, 2147483648, 2147483648, 'finalizing');
+    await check('all bytes sent does not mean the upload has succeeded', `return document.querySelector('.upload-state').textContent === 'Finalizing…' && document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '99' && !document.querySelector('.upload-item[data-status="completed"]');`);
+    uploads[0].resolve({ success: true });
+    await waitForUploadCount(2);
+    await check('cloud success marks 100% and starts the next queued file', `return document.querySelector('.upload-percent').textContent === '100%' && document.querySelectorAll('.upload-item[data-status="completed"]').length === 1;`);
+    assert.deepEqual(uploads[1].args.slice(0, 3), ['s3-demo', 'studio-assets', 'releases/workspace-backup.zip']);
+    uploadProgress(1, 104857600, 629145600);
+    uploads[1].event.sender.send('upload-progress', { uploadId: uploads[1].args[4], status: 'failed', error: 'Fixture upload denied <script>window.uploadInjected=true</script>' });
+    uploads[1].reject(new Error('Fixture upload denied <script>window.uploadInjected=true</script>'));
+    await waitForUploadCount(3);
+    await check('a failed file preserves its error and does not stop the queue', `return document.querySelectorAll('.upload-item[data-status="failed"]').length === 1 && document.querySelector('.upload-item[data-status="failed"] .upload-error').textContent.includes('Fixture upload denied') && !window.uploadInjected;`);
+    await check('the queue scrolls to reveal the next active file', `const row = document.querySelector('.upload-item[data-status="preparing"]').getBoundingClientRect(); const list = document.getElementById('uploadList').getBoundingClientRect(); return row.top >= list.top && row.bottom <= list.bottom;`);
+    await run('themePreference = "light"; applyTheme();');
+    win.setSize(1280, 840);
+    await shot('19-upload-failure');
+    uploads[2].resolve({ success: true });
+    await waitForUploadCount(4);
+    assert.deepEqual(uploads[3].args.slice(0, 3), ['gcs-demo', 'studio-research', 'notes.txt']);
+    await check('zero-byte uploads finish without NaN or Infinity', `const task = [...uploadTasks.values()].find(task => task.name === 'empty.txt'); return task.status === 'completed' && task.row.querySelector('.upload-percent').textContent === '100%' && task.row.querySelector('.upload-bytes').textContent === '0 B / 0 B';`);
+    await run('document.getElementById("clearUploadsButton").click();');
+    await check('clearing finished uploads retains the file still uploading', `return uploadTasks.size === 1 && document.querySelector('.upload-file-name').textContent === 'notes.txt' && !document.getElementById('uploadPanel').hidden;`);
+    // Leave the upload targets before completion: the queue must not refresh
+    // or sort unrelated storage that the user is now browsing.
+    await run('await selectConnection(workspaceConnections[2]);');
+    const listingsBeforeCompletion = listingCalls;
+    uploads[3].resolve({ success: true });
+    await run('await fixtureBatch;');
+    assert.equal(listingCalls, listingsBeforeCompletion, 'completion does not reload an unrelated directory');
+    assert.ok(listingCalls > listingsBeforeUploads, 'the user remained free to navigate');
+    await check('completion retains results without stealing the current connection', 'return currentConnection.id === "azure-demo" && !uploadsRunning && document.querySelector(".upload-state").textContent === "Completed";');
+    uploadProgress(3, 1, 120);
+    await check('late progress events cannot regress a completed upload', 'return document.querySelector(".upload-percent").textContent === "100%";');
+    await run('clearFinishedUploads();');
+    await check('the panel can be dismissed after every upload finishes', 'return uploadTasks.size === 0 && document.getElementById("uploadPanel").hidden;');
+
+    await run(`window.finalBatch = enqueueUploads([{ name: 'visible.txt', path: '/fixture/visible.txt', size: 5 }], { connectionId: currentConnection.id, connectionName: currentConnection.name, type: currentConnection.type, bucket: currentBucket, prefix: currentPrefix });`);
+    await waitForUploadCount(5);
+    const beforeVisibleCompletion = listingCalls;
+    uploads[4].resolve({ success: true });
+    await run('await finalBatch;');
+    assert.equal(listingCalls, beforeVisibleCompletion + 1, 'successful uploads refresh their visible destination');
+    await check('newly uploaded files retain the existing newest-first sort', 'return currentSortField === "modified" && currentSortDirection === "desc";');
+    await run('clearFinishedUploads();');
     assert.deepEqual(externalRequests, [], 'UI must work without external network requests');
     assert.deepEqual(errors, [], 'No Chromium runtime errors');
     if (process.argv.includes('--update-screenshots')) {

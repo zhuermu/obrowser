@@ -1591,55 +1591,19 @@ async function uploadFile() {
     return;
   }
 
+  // Capture the destination before opening the picker; browsing while a batch
+  // is running must never redirect its remaining files to a different folder.
+  const target = {
+    connectionId: currentConnection.id,
+    connectionName: currentConnection.name,
+    type: currentConnection.type,
+    bucket: currentBucket,
+    prefix: currentPrefix
+  };
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  
-  input.onchange = async (e) => {
-    showButtonLoading('uploadButton');
-    try {
-      const files = Array.from(e.target.files);
-      let uploadCount = 0;
-      let errorCount = 0;
-      let uploadedFiles = []; // 记录上传成功的文件名
-      
-      for (const file of files) {
-        try {
-          const key = currentPrefix + file.name;
-          await ipcRenderer.invoke('upload-object', currentConnection.id, currentBucket, key, file.path);
-          uploadCount++;
-          uploadedFiles.push(file.name); // 记录上传成功的文件名
-        } catch (error) {
-          console.error('Error uploading file:', error);
-          errorCount++;
-          // Don't show alerts for each file to avoid overwhelming the user
-        }
-      }
-      
-      // 上传完成后，自动按修改时间降序排序，以便查看最新上传的文件
-      if (uploadCount > 0) {
-        currentSortField = 'modified';
-        currentSortDirection = 'desc';
-      }
-      
-      // Show a summary notification
-      if (errorCount === 0 && uploadCount > 0) {
-        if (uploadCount === 1) {
-          showNotification(`Successfully uploaded: ${uploadedFiles[0]}`, 'success');
-        } else {
-          showNotification(`Successfully uploaded ${uploadCount} files`, 'success');
-        }
-      } else if (uploadCount === 0) {
-        showNotification(`Failed to upload all ${errorCount} file(s)`, 'error');
-      } else {
-        showNotification(`Uploaded ${uploadCount} file(s), failed to upload ${errorCount} file(s)`, 'info');
-      }
-      
-      loadFiles();
-    } finally {
-      hideButtonLoading('uploadButton');
-    }
-  };
+  input.onchange = event => enqueueUploads(Array.from(event.target.files), target);
   
   input.click();
 }

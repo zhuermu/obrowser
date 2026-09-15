@@ -8,6 +8,7 @@
     'arrow-left': '<path d="m12 5-7 7 7 7M5 12h15"/>',
     'arrow-up': '<path d="m5 12 7-7 7 7M12 5v15"/>',
     'chevron-right': '<path d="m9 5 7 7-7 7"/>',
+    'chevron-down': '<path d="m5 9 7 7 7-7"/>',
     'folder': '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     'folder-open': '<path d="M3 11V6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v2M3 11h19l-3 10H5z"/>',
     'folder-plus': '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v7M8.5 13.5h7"/>',

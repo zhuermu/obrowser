@@ -22,8 +22,10 @@
  */
 
 const fs = require('fs');
+const { pipeline } = require('stream/promises');
 const { Storage } = require('@google-cloud/storage');
 const StorageClientInterface = require('./StorageClientInterface');
+const { downloadContentDisposition } = require('../content-disposition');
 
 /**
  * Map common file extensions to content types so previews work in the browser.
@@ -266,17 +268,24 @@ class GCSClient extends StorageClientInterface {
    * @param {Buffer|string} body - Object content
    * @returns {Promise<Object>} Result of the upload operation
    */
-  async uploadObject(bucket, key, body) {
+  async uploadObject(bucket, key, body, options = {}) {
     try {
       const file = this.storage.bucket(bucket).file(key);
       const contentType = guessContentType(key);
 
-      await file.save(body, {
-        // Single-request upload: simpler and faster for the desktop use case,
-        // and avoids leaving orphaned resumable sessions behind on failure.
-        resumable: false,
+      const uploadOptions = {
+        resumable: options.contentLength >= 8 * 1024 * 1024,
+        ...(options.contentLength >= 8 * 1024 * 1024 ? { chunkSize: 8 * 1024 * 1024 } : {}),
         ...(contentType ? { contentType } : {})
-      });
+      };
+      const onProgress = progress => options.onProgress?.(progress.bytesWritten);
+      if (typeof body?.pipe === 'function') {
+        const destination = file.createWriteStream(uploadOptions);
+        destination.on('progress', onProgress);
+        await pipeline(body, destination);
+      } else {
+        await file.save(body, { ...uploadOptions, onUploadProgress: onProgress });
+      }
 
       return { success: true, key };
     } catch (error) {
@@ -337,7 +346,6 @@ class GCSClient extends StorageClientInterface {
   async getObjectUrl(bucket, key, operation = 'download') {
     console.log(`GCS getObjectUrl - Bucket: ${bucket}, Key: ${key}, Operation: ${operation}`);
 
-    const fileName = key.split('/').pop();
     const isPdf = (key.split('.').pop() || '').toLowerCase() === 'pdf';
 
     const options = {
@@ -347,7 +355,7 @@ class GCSClient extends StorageClientInterface {
     };
     if (operation === 'download') {
       // Forces the browser to save instead of render.
-      options.responseDisposition = `attachment; filename="${fileName}"`;
+      options.responseDisposition = downloadContentDisposition(key);
     } else if (isPdf) {
       options.responseType = 'application/pdf';
     }

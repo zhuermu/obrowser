@@ -9,6 +9,7 @@ const {
   BlobSASPermissions
 } = require('@azure/storage-blob');
 const StorageClientInterface = require('./StorageClientInterface');
+const { downloadContentDisposition } = require('../content-disposition');
 
 class AzureBlobClient extends StorageClientInterface {
   constructor() {
@@ -135,17 +136,20 @@ class AzureBlobClient extends StorageClientInterface {
    * @param {Buffer|Readable} content - Blob content
    * @returns {Promise<Object>} Result of the upload operation
    */
-  async uploadObject(container, blobName, content) {
+  async uploadObject(container, blobName, content, options = {}) {
     const containerClient = this.client.getContainerClient(container);
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
     
     const uploadOptions = {
+      onProgress: progress => options.onProgress?.(progress.loadedBytes),
       blobHTTPHeaders: {
         blobContentType: this._getContentType(blobName)
       }
     };
     
-    const result = await blockBlobClient.upload(content, content.length, uploadOptions);
+    const result = typeof content?.pipe === 'function'
+      ? await blockBlobClient.uploadStream(content, 8 * 1024 * 1024, 2, uploadOptions)
+      : await blockBlobClient.upload(content, content.length, uploadOptions);
     
     return {
       success: true,
@@ -228,7 +232,7 @@ class AzureBlobClient extends StorageClientInterface {
     
     // For download operations, set content disposition
     if (operation === 'download') {
-      sasOptions.contentDisposition = `attachment; filename="${blobName.split('/').pop()}"`;
+      sasOptions.contentDisposition = downloadContentDisposition(blobName);
     }
     
     const sasToken = generateBlobSASQueryParameters(
@@ -346,4 +350,4 @@ class AzureBlobClient extends StorageClientInterface {
   }
 }
 
-module.exports = AzureBlobClient; 
+module.exports = AzureBlobClient;

@@ -4,6 +4,7 @@
 
 const OSS = require('ali-oss');
 const StorageClientInterface = require('./StorageClientInterface');
+const { downloadContentDisposition } = require('../content-disposition');
 
 class AliyunOSSClient extends StorageClientInterface {
   constructor() {
@@ -137,6 +138,36 @@ class AliyunOSSClient extends StorageClientInterface {
     }
   }
 
+  /** Upload file parts directly from disk, reporting acknowledged bytes. */
+  async uploadFile(bucket, key, filePath, options = {}) {
+    if (bucket !== this.client.options.bucket) this.client.useBucket(bucket);
+    let checkpoint;
+    try {
+      const result = await this.client.multipartUpload(key, filePath, {
+        mime: this._getContentType(key),
+        parallel: 2,
+        partSize: 8 * 1024 * 1024,
+        progress: (fraction, nextCheckpoint) => {
+          checkpoint = nextCheckpoint || checkpoint;
+          const loaded = nextCheckpoint
+            ? nextCheckpoint.doneParts.reduce((sum, part) => sum + Math.min(
+              nextCheckpoint.partSize,
+              nextCheckpoint.fileSize - (part.number - 1) * nextCheckpoint.partSize
+            ), 0)
+            : fraction * options.contentLength;
+          options.onProgress?.(loaded);
+        }
+      });
+      return { success: true, etag: result.etag, name: result.name };
+    } catch (error) {
+      if (checkpoint?.uploadId) {
+        try { await this.client.abortMultipartUpload(key, checkpoint.uploadId); }
+        catch (cleanupError) { console.warn('Could not clean up failed OSS upload:', cleanupError.message); }
+      }
+      throw error;
+    }
+  }
+
   /**
    * Upload an object to Aliyun OSS
    * @param {string} bucket - Bucket name
@@ -248,9 +279,8 @@ class AliyunOSSClient extends StorageClientInterface {
       
       if (operation === 'download') {
         // Set Content-Disposition header for download
-        const filename = key.split('/').pop();
         options.response = {
-          'content-disposition': `attachment; filename="${filename}"`
+          'content-disposition': downloadContentDisposition(key)
         };
       } else if (operation === 'view') {
         // For view operations, explicitly do not set content-disposition
@@ -388,4 +418,4 @@ class AliyunOSSClient extends StorageClientInterface {
   }
 }
 
-module.exports = AliyunOSSClient; 
+module.exports = AliyunOSSClient;
