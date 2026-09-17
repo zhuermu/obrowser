@@ -6,6 +6,7 @@ let currentPrefix = '';
 let selectedFiles = new Set();
 let isEditing = false;
 let listingInProgress = false;
+let previewDownloadTarget = null;
 
 // Loading indicators
 function showLoading(message = 'Loading...') {
@@ -1495,15 +1496,10 @@ async function loadFiles(refresh = true) {
             showNotification('Object path copied.');
           } catch (error) { showNotification(`Could not copy path: ${error.message}`, 'error'); }
         });
-        if (!item.isFolder) createRowAction(actions, 'Download', 'download', async () => {
-          try {
-            showLoading('Preparing download…');
-            const url = await getObjectUrl(connection.id, bucket, item.Key, 'download');
-            await startVerifiedDownload(url, name);
-            showNotification(`Download started: ${name}`);
-          } catch (error) { showNotification(`Download failed: ${error.message}`, 'error'); }
-          finally { hideLoading(); }
-        });
+        if (!item.isFolder) createRowAction(actions, 'Download', 'download', () => enqueueDownloads([item], {
+          connectionId: connection.id, connectionName: connection.name,
+          type: connection.type, bucket, prefix
+        }));
         createRowAction(actions, item.isFolder ? 'Delete folder' : 'Delete file', 'trash', async () => {
           if (!confirm(`Permanently delete "${name}"${item.isFolder ? ' and everything inside it' : ''}? This cannot be undone.`)) return;
           try {
@@ -1616,20 +1612,18 @@ async function uploadFile() {
  * probes the URL (it can bypass CORS) and reports a readable error instead.
  *
  * @param {string} url - Signed URL to download
- * @param {string} filename - Suggested filename
+ * @param {string} downloadId - Transfer task ID used to correlate native events
  */
-async function startVerifiedDownload(url, filename) {
+async function startVerifiedDownload(url, downloadId) {
   const check = await ipcRenderer.invoke('verify-object-url', url);
   if (!check.ok) {
     throw new Error(check.message || 'The download link is not valid.');
   }
 
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const task = transferTasks.get(downloadId);
+  if (task) setTransferState(task, 'starting');
+  const result = await ipcRenderer.invoke('start-download', { downloadId, url });
+  if (!result?.success) throw new Error(result?.error || 'Could not start the download.');
 }
 
 /**
@@ -1659,8 +1653,10 @@ async function getObjectUrl(connectionId, bucket, key, operation = 'download') {
 // 修改downloadSelected函数来使用新的getObjectUrl辅助函数
 async function downloadSelected() {
   if (!currentConnection || !currentBucket) return;
-  const connectionId = currentConnection.id;
-  const bucket = currentBucket;
+  const target = {
+    connectionId: currentConnection.id, connectionName: currentConnection.name,
+    type: currentConnection.type, bucket: currentBucket, prefix: currentPrefix
+  };
   const selectedItems = [...selectedFiles].filter(key => !key.endsWith('/')).map(Key => ({ Key }));
   
   if (selectedItems.length === 0) {
@@ -1671,44 +1667,7 @@ async function downloadSelected() {
   showButtonLoading('downloadButton');
   
   try {
-    let downloadCount = 0;
-    let errors = [];
-    
-    for (const item of selectedItems) {
-      if (item.Type === 'folder') continue;
-      
-      try {
-        const key = item.Key;
-        console.log(`Preparing to download: ${key}`);
-        
-        // 使用getObjectUrl获取下载链接
-        const downloadUrl = await getObjectUrl(connectionId, bucket, key, 'download');
-
-        // 校验链接后再触发下载
-        await startVerifiedDownload(downloadUrl, key.split('/').pop());
-
-        downloadCount++;
-      } catch (error) {
-        console.error('Error downloading file:', error);
-        errors.push({ file: item.Key, error: error.message });
-      }
-    }
-    
-    if (errors.length === 0) {
-      if (downloadCount === 0) {
-        showNotification('All downloads were cancelled', 'info');
-      } else {
-        showNotification(`Started ${downloadCount} download(s)`, 'success');
-      }
-    } else {
-      const message = `Downloaded ${downloadCount} file(s)` +
-        (errors.length > 0 ? `, but ${errors.length} failed: ${errors[0].error}` : '');
-      showNotification(message, 'warning');
-      console.error('Download errors:', errors);
-    }
-  } catch (error) {
-    console.error('Error in batch download:', error);
-    showNotification(`Download failed: ${error.message}`, 'error');
+    await enqueueDownloads(selectedItems, target);
   } finally {
     hideButtonLoading('downloadButton');
   }
@@ -1891,6 +1850,10 @@ function hideNotification() {
 }
 
 async function previewFile(file) {
+  const downloadTarget = {
+    connectionId: currentConnection.id, connectionName: currentConnection.name,
+    type: currentConnection.type, bucket: currentBucket, prefix: currentPrefix
+  };
   showLoading('Loading preview...');
   try {
     // 获取文件扩展名
@@ -1899,7 +1862,7 @@ async function previewFile(file) {
     // 对于文本文件和特殊格式，继续使用preview-object
     if (['txt', 'json', 'js', 'css', 'xml', 'md', 'markdown', 'yaml', 'yml', 'ini', 'csv', 'log'].includes(fileExtension)) {
       const result = await ipcRenderer.invoke('preview-object', currentConnection.id, currentBucket, file.Key);
-      renderPreview(file, result);
+      renderPreview(file, result, downloadTarget);
       return;
     }
     
@@ -1916,12 +1879,12 @@ async function previewFile(file) {
         content: contentUrl
       };
       
-      renderPreview(file, result);
+      renderPreview(file, result, downloadTarget);
     } catch (viewUrlError) {
       console.error('Error getting view URL, falling back to preview-object:', viewUrlError);
       // 如果获取链接失败，回退到原来的方法
       const result = await ipcRenderer.invoke('preview-object', currentConnection.id, currentBucket, file.Key);
-      renderPreview(file, result);
+      renderPreview(file, result, downloadTarget);
     }
   } catch (error) {
     console.error('Error previewing file:', error);
@@ -1933,7 +1896,8 @@ async function previewFile(file) {
 }
 
 // 渲染预览内容（分离自previewFile函数，保持原有预览逻辑）
-async function renderPreview(file, result) {
+async function renderPreview(file, result, downloadTarget) {
+  previewDownloadTarget = downloadTarget;
   const previewModal = document.getElementById('previewModal');
   const previewContent = document.getElementById('previewContent');
   
@@ -2148,28 +2112,19 @@ function getFileIconForExtension(extension) {
 function hidePreview() {
   closeDialog('previewModal');
   document.getElementById('previewContent').replaceChildren();
+  previewDownloadTarget = null;
 }
 
 // Helper function to download a file with the correct content-disposition
 async function downloadFile(encodedKey) {
-  try {
-    showLoading('Preparing download...');
-    const key = decodeURIComponent(encodedKey);
-    
-    // 使用明确的下载操作获取URL
-    const downloadUrl = await getObjectUrl(currentConnection.id, currentBucket, key, 'download');
-
-    // 预览窗口可能已打开很久，链接可能失效或跨区域被重定向；先校验再下载，
-    // 否则浏览器会把 S3 返回的 XML 错误文档保存成 mp4/pdf 等文件。
-    await startVerifiedDownload(downloadUrl, key.split('/').pop());
-
-    showNotification(`File "${key.split('/').pop()}" download started`, 'success');
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    showNotification(`Failed to download file: ${error.message}`, 'error');
-  } finally {
-    hideLoading();
-  }
+  const target = previewDownloadTarget || (currentConnection && {
+    connectionId: currentConnection.id, connectionName: currentConnection.name,
+    type: currentConnection.type, bucket: currentBucket, prefix: currentPrefix
+  });
+  if (!target) return;
+  const key = decodeURIComponent(encodedKey);
+  hidePreview();
+  return enqueueDownloads([{ Key: key }], target);
 }
 
 // Initialize application

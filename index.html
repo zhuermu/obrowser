@@ -59,15 +59,15 @@
           <div class="file-list" id="fileList" role="rowgroup" tabindex="-1"></div>
         </div>
       </section>
-      <section class="upload-panel" id="uploadPanel" aria-label="File uploads" hidden>
-        <div class="upload-panel-heading">
-          <button id="uploadPanelToggle" class="text-action-button upload-panel-toggle" onclick="toggleUploadPanel()" aria-expanded="true" aria-controls="uploadList">
-            <i class="fa-solid fa-upload" aria-hidden="true"></i><span>Uploads</span><i class="fa-solid fa-chevron-down upload-chevron" aria-hidden="true"></i>
+      <section class="transfer-panel" id="transferPanel" aria-label="File transfers" hidden>
+        <div class="transfer-panel-heading">
+          <button id="transferPanelToggle" class="text-action-button transfer-panel-toggle" onclick="toggleTransferPanel()" aria-expanded="true" aria-controls="transferList">
+            <i class="fa-solid fa-transfer" aria-hidden="true"></i><span>Transfers</span><i class="fa-solid fa-chevron-down transfer-chevron" aria-hidden="true"></i>
           </button>
-          <span id="uploadSummary" class="upload-summary" role="status" aria-live="polite"></span>
-          <button id="clearUploadsButton" class="text-action-button" onclick="clearFinishedUploads()" title="Clear completed and failed uploads" disabled>Clear finished</button>
+          <span id="transferSummary" class="transfer-summary" role="status" aria-live="polite"></span>
+          <button id="clearTransfersButton" class="text-action-button" onclick="clearFinishedTransfers()" title="Clear completed, failed and cancelled transfers" disabled>Clear finished</button>
         </div>
-        <ul id="uploadList" class="upload-list" aria-label="Upload queue"></ul>
+        <ul id="transferList" class="transfer-list" aria-label="Uploads and downloads"></ul>
       </section>
       <footer class="status-bar"><span id="statusSummary" role="status">Ready when you are</span><span id="statusHint">One workspace. All your clouds.</span></footer>
       <div class="loading-overlay" id="loadingOverlay" role="status" aria-live="polite"><div class="loading-pill"><span class="loading-spinner"></span><span class="loading-text">Loading…</span></div></div>
@@ -305,6 +305,6 @@
   <div id="notification" role="status" aria-live="polite" style="display: none;"><i class="fa-solid fa-check-circle" id="notificationIcon"></i><span id="notificationMessage"></span><button class="action-button" onclick="hideNotification()" aria-label="Dismiss notification"><i class="fa-solid fa-xmark"></i></button></div>
   <script src="renderer.js"></script>
   <script src="workspace-ui.js"></script>
-  <script src="uploads-ui.js"></script>
+  <script src="transfers-ui.js"></script>
 </body>
 </html>

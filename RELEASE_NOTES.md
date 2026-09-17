@@ -1,43 +1,36 @@
-# OBrowser v0.0.6
+# OBrowser v1.1.0 — Upload and download progress
 
-## 🎉 新功能
+## A unified Transfers panel
 
-### macOS 代码签名支持
-- ✅ 使用 Apple Developer ID 证书签名
-- ✅ 支持 macOS 公证（Notarization）
-- ✅ 解决 "damaged and can't be opened" 问题
-- ✅ 用户可以直接打开应用，无需额外操作
+- Uploads and downloads now appear immediately in one collapsible panel, with file names, source/destination, transferred bytes, percentage, and status.
+- Downloads show the selected local save path and follow Electron's actual progress, completion, cancellation and failure events. Single-file, batch and preview downloads all use the same panel.
+- Unknown download sizes show received bytes and an indeterminate progress bar. Reaching the expected byte count does not count as success until the download has actually completed.
+- Keep browsing or add files while transfers run. Queued uploads retain their original destination even if you change folders or connections.
+- Completed, failed and cancelled entries remain visible until you clear them; active transfers cannot be cleared. Transfers are session-only: keep the app open until they finish.
 
-## 📦 下载
+## Large uploads and Unicode downloads
 
-### macOS
-- **OBrowser-0.0.6.dmg** - Intel Mac (x64)
-- **OBrowser-0.0.6-arm64.dmg** - Apple Silicon (M1/M2/M3)
-- **OBrowser-0.0.6-mac.zip** - Intel Mac (x64) 压缩包
-- **OBrowser-0.0.6-arm64-mac.zip** - Apple Silicon 压缩包
+- Local uploads use streaming or multipart transfers instead of reading entire large files into memory. S3, Azure Blob, Aliyun OSS and GCS report real SDK progress.
+- Chinese and other Unicode download names use RFC 5987 `filename*`, fixing S3's `400 InvalidArgument: Header value cannot be represented using ISO-8859-1` while preserving the original filename.
+- Signed download URLs are still verified before starting a download, so storage errors are not silently saved as file contents.
 
-### 安装说明
+## Release packaging
 
-#### macOS
-1. 下载对应架构的 .dmg 文件
-2. 双击打开 .dmg
-3. 将 OBrowser 拖到 Applications 文件夹
-4. 首次打开时，右键点击应用选择"打开"
+- Application packages include runtime files only. Local environment files, development tooling and emulator data are excluded and checked before release.
 
-应用已经过代码签名，可以安全使用。
+## Downloads
 
-## 🔧 技术改进
+| Platform | File | Notes |
+| :--- | :--- | :--- |
+| macOS · Apple silicon | `OBrowser-1.1.0-arm64.dmg` | Signed and notarized |
+| macOS · Intel | `OBrowser-1.1.0.dmg` | Signed and notarized |
+| macOS · ZIP | `OBrowser-1.1.0-arm64-mac.zip`, `OBrowser-1.1.0-mac.zip` | Same signed and notarized apps |
+| Windows · x64 | `OBrowser-1.1.0-x64.zip` | Unpack and run `OBrowser.exe`; unsigned |
 
-- 配置 Developer ID Application 证书
-- 添加 Hardened Runtime 支持
-- 支持自动公证流程
-- 同时支持 Intel 和 Apple Silicon 架构
+Windows SmartScreen may warn because the Windows build is unsigned. No Linux binary is included in this release. SHA-256 checksums are provided in `SHA256SUMS.txt`.
 
-## 📝 文档
+## Verification
 
-- 新增 `NOTARIZATION.md` - 公证配置说明
-- 新增 `.env.example` - 环境变量配置示例
+Unit and Electron UI tests cover transfer states, Unicode download names, failed preflights, unknown and zero-byte sizes, navigation, and light/dark/minimum-window layouts. An in-process fixture exercises real Chromium downloads, verifies saved bytes and Chinese filenames, and checks native cancellation. These tests do not use real cloud credentials or objects.
 
----
-
-**完整更新日志**: https://github.com/zhuermu/obrowser/compare/v0.0.5...v0.0.6
+Full changelog: https://github.com/zhuermu/obrowser/compare/v1.0.0...v1.1.0

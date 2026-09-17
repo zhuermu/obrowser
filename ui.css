@@ -167,30 +167,34 @@ input[type="checkbox"] { width: 13px; height: 13px; margin: 0; cursor: pointer; 
 .sortable-column i.fa-sort-up, .sortable-column i.fa-sort-down { opacity: 1; color: var(--accent); }
 .new-badge { display: none; }
 .status-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 36px; padding: 0 30px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
-.upload-panel { flex: 0 0 auto; border-top: 1px solid var(--strong-line); background: var(--subtle); position: relative; z-index: 101; }
-.upload-panel-heading { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 5px 22px; }
-.upload-panel-toggle { font-size: 12px; color: var(--text); gap: 8px; padding: 6px 8px; }
-.upload-panel-toggle > .fa-upload { color: var(--accent); }
-.upload-chevron { width: 12px; height: 12px; color: var(--muted); transition: transform .15s; }
-.upload-panel-toggle[aria-expanded="false"] .upload-chevron { transform: rotate(-90deg); }
-.upload-summary { color: var(--secondary); font-size: 11px; line-height: 1.5; }
-#clearUploadsButton { margin-left: auto; font-size: 11px; }
-.upload-list { list-style: none; margin: 0; padding: 0 30px; max-height: min(260px, 30vh); overflow: auto; overscroll-behavior: contain; }
-.upload-item { display: flex; gap: 11px; padding: 14px 0; border-top: 1px solid var(--line); }
-.upload-file-icon { display: flex; justify-content: center; align-items: center; width: 30px; height: 34px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; color: var(--secondary); background: var(--canvas); }
-.upload-details { flex: 1; min-width: 0; }
-.upload-file-heading, .upload-metadata { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.upload-file-name { font-size: 12px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.upload-percent { color: var(--secondary); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.upload-destination { color: var(--muted); font-size: 10px; margin: 4px 0 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.upload-progress-track { height: 4px; border-radius: 4px; background: var(--strong-line); overflow: hidden; }
-.upload-progress-track > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .15s ease; }
-.upload-metadata { color: var(--secondary); font-size: 10px; margin-top: 7px; font-variant-numeric: tabular-nums; }
-.upload-item[data-status="completed"] .upload-state { color: var(--accent); }
-.upload-item[data-status="failed"] .upload-state, .upload-error { color: var(--danger); }
-.upload-item[data-status="failed"] .upload-progress-track > span { background: var(--danger); }
-.upload-item[data-status="queued"] .upload-state { color: var(--muted); }
-.upload-error { margin-top: 6px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.transfer-panel { flex: 0 0 auto; border-top: 1px solid var(--strong-line); background: var(--subtle); position: relative; z-index: 101; }
+.transfer-panel-heading { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 5px 22px; }
+.transfer-panel-toggle { font-size: 12px; color: var(--text); gap: 8px; padding: 6px 8px; }
+.transfer-panel-toggle > .fa-transfer { color: var(--accent); }
+.transfer-chevron { width: 12px; height: 12px; color: var(--muted); transition: transform .15s; }
+.transfer-panel-toggle[aria-expanded="false"] .transfer-chevron { transform: rotate(-90deg); }
+.transfer-summary { color: var(--secondary); font-size: 11px; line-height: 1.5; }
+#clearTransfersButton { margin-left: auto; font-size: 11px; }
+.transfer-list { list-style: none; margin: 0; padding: 0 30px; max-height: min(260px, 30vh); overflow: auto; overscroll-behavior: contain; }
+.transfer-item { display: flex; gap: 11px; padding: 14px 0; border-top: 1px solid var(--line); }
+.transfer-file-icon { display: flex; justify-content: center; align-items: center; width: 30px; height: 34px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; color: var(--secondary); background: var(--canvas); }
+.transfer-details { flex: 1; min-width: 0; }
+.transfer-file-heading, .transfer-metadata { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.transfer-file-name { font-size: 12px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.transfer-percent { color: var(--secondary); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.transfer-destination { color: var(--muted); font-size: 10px; margin: 4px 0 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.transfer-save-path { color: var(--secondary); font-size: 10px; margin: -3px 0 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.transfer-progress-track { height: 4px; border-radius: 4px; background: var(--strong-line); overflow: hidden; }
+.transfer-progress-track > span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .15s ease; }
+.transfer-progress-track.indeterminate > span { width: 25%; animation: transfer-progress 1.4s ease-in-out infinite; }
+@keyframes transfer-progress { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
+.transfer-metadata { color: var(--secondary); font-size: 10px; margin-top: 7px; font-variant-numeric: tabular-nums; }
+.transfer-item[data-status="completed"] .transfer-state { color: var(--accent); }
+.transfer-item[data-status="failed"] .transfer-state, .transfer-error { color: var(--danger); }
+.transfer-item[data-status="failed"] .transfer-progress-track > span { background: var(--danger); }
+.transfer-item[data-status="queued"] .transfer-state { color: var(--muted); }
+.transfer-item[data-status="cancelled"] .transfer-state, .transfer-item[data-status="paused"] .transfer-state, .transfer-item[data-status="interrupted"] .transfer-state { color: var(--secondary); }
+.transfer-error { margin-top: 6px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .empty-state { min-height: 300px; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px; }
 .empty-state > .fa-solid { width: 32px; height: 32px; margin-bottom: 14px; color: var(--muted); }
 .empty-state h2 { font-size: 18px; font-weight: 550; letter-spacing: -.4px; margin: 4px 0 8px; }
@@ -301,8 +305,8 @@ input[type="checkbox"] { width: 13px; height: 13px; margin: 0; cursor: pointer; 
   .toolbar { gap: 6px; }
   #newFolderButton > span:not(.button-spinner) { display: none; }
   .status-bar { padding: 0 20px; }
-  .upload-panel-heading { padding-left: 12px; padding-right: 12px; gap: 8px; }
-  .upload-list { padding: 0 20px; }
+  .transfer-panel-heading { padding-left: 12px; padding-right: 12px; gap: 8px; }
+  .transfer-list { padding: 0 20px; }
   #statusHint { max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :root { --row-columns: 18px 24px minmax(130px, 1fr) 65px 112px 90px; }
   .column-header, .file-item { column-gap: 7px; padding: 0 4px; }

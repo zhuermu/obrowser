@@ -119,6 +119,16 @@ npm run build:linux        # AppImage, x64
 
 Artifacts are written to `dist/`.
 
+Release packaging includes runtime files only. An `afterPack` audit rejects local
+environment files, development state and missing transfer UI files before signing
+or notarization. Never add `.env` or credential files to the packaging allowlist.
+
+For a versioned release directory, pass `--publish never
+-c.directories.output=dist/release-VERSION` to the build command. After building,
+`node scripts/notarize-images.cjs <Intel.dmg> <AppleSilicon.dmg>` notarizes and
+staples the signed disk images as well as the already-notarized apps. Verify the
+signatures and receipts before uploading release assets.
+
 Cross-building has limits worth knowing before you try: from macOS the Windows
 `zip` target works, but `portable` is NSIS-based and needs Wine. AppImage
 likewise expects Linux tooling or a container. Build each platform on that
@@ -225,8 +235,8 @@ If you specifically want an access-key/secret pair for GCS, those are "HMAC keys
 ### File Operations
 
 - **Browse Folders**: Double-click folders to navigate in and out of directories
-- **Upload Files**: Select files from your computer to upload to the current folder. A collapsible **Uploads** panel shows every file, its destination, transferred bytes, percentage, and queued/completed/failed status. You can keep browsing or add more files while uploading; each batch keeps its original destination. Failed files retain their error details, and **Clear finished** removes only finished entries. Keep the app open until uploads complete; this queue is session-only.
-- **Download Files**: Select files and click the download button
+- **Upload Files**: Select files from your computer to upload to the current folder. The collapsible **Transfers** panel shows every upload and download, its source/destination, transferred bytes, percentage, and status. You can keep browsing or add more files while uploading; each batch keeps its original destination. **Clear finished** removes only completed, failed or cancelled entries. Keep the app open until transfers complete; this queue is session-only.
+- **Download Files**: Use a file's download button, the selection toolbar, or the download link in a preview. The **Transfers** panel opens immediately and follows the actual download through preparation, save-location selection, progress, completion, cancellation or failure. The chosen local path is displayed; unknown total sizes show received bytes without a fabricated percentage. Preview downloads close the preview to reveal progress. Signed links are still verified before starting a download.
 - **Create Folders**: Create new folders in the current directory
 - **Delete Files/Folders**: Select items and click the delete button
 - **Preview Files**: Double-click a file, press Space on its focused row, or use its preview button.

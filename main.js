@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 const { fromIni } = require('@aws-sdk/credential-providers');
 const { verifyDownloadUrl } = require('./download-verifier');
 const { createUploadHandler } = require('./upload-progress');
+const { createDownloadManager } = require('./download-manager');
 const { parseResolvedProxy, chooseProxy, applyNetworkConfig } = require('./network-config');
 const {
   listAwsProfiles,
@@ -24,6 +25,13 @@ const store = new SimpleStore();
 // the UI without mutating the saved connection config. Cleared when the
 // connection is deselected or when the app restarts.
 const regionOverrides = new Map();
+const downloadManagers = new Map();
+
+ipcMain.handle('start-download', (event, request) => {
+  const manager = downloadManagers.get(event.sender.id);
+  if (!manager) throw new Error('The download window is no longer available.');
+  return manager.start(request);
+});
 
 // Handle uncaught exceptions to prevent EPIPE errors from crashing the app
 process.on('uncaughtException', (error) => {
@@ -55,6 +63,10 @@ function createWindow() {
     }
   });
 
+  const downloads = createDownloadManager(mainWindow.webContents);
+  const windowId = mainWindow.webContents.id;
+  downloadManagers.set(windowId, downloads);
+  mainWindow.webContents.once('destroyed', () => downloadManagers.delete(windowId));
   mainWindow.loadFile('index.html');
 
   // Create the application menu

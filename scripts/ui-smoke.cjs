@@ -1,5 +1,6 @@
-/* Real Chromium / Electron smoke tests using ONLY in-memory synthetic storage.
+/* Real Chromium / Electron smoke tests using ONLY synthetic storage.
  * Does not import main.js, read saved connections, or contact a cloud provider.
+ * Native download checks serve fixture bytes in-process into a temporary folder.
  * Run: npm run test:ui
  */
 const { app, BrowserWindow, ipcMain, session } = require('electron');
@@ -36,7 +37,20 @@ const mutations = [];
 const downloadChecks = [];
 const errors = [];
 const externalRequests = [];
+const appRoot = process.env.OBROWSER_TEST_APP || path.join(__dirname, '..');
 const uploads = [];
+const downloads = [];
+let downloadVerification = { ok: true };
+let holdDownloads = false;
+
+ipcMain.handle('start-download', (event, request) => {
+  downloadChecks.push(['start-download', request]);
+  downloads.push({ event, ...request });
+  if (!holdDownloads) event.sender.send('download-progress', {
+    downloadId: request.downloadId, status: 'completed', loaded: 120, total: 120, path: '/fixture/download.txt'
+  });
+  return { success: true };
+});
 
 ipcMain.handle('upload-object', (event, ...args) => new Promise((resolve, reject) => {
   uploads.push({ event, args, resolve, reject });
@@ -52,6 +66,9 @@ const uploadProgress = (index, loaded, total, status = 'uploading') => {
   const upload = uploads[index];
   upload.event.sender.send('upload-progress', { uploadId: upload.args[4], loaded, total, status });
 };
+const downloadProgress = (download, status, loaded, total, extra = {}) => download.event.sender.send('download-progress', {
+  downloadId: download.downloadId, status, loaded, total, ...extra
+});
 
 ipcMain.handle('get-connections', () => saved);
 ipcMain.handle('save-connections', (_, next) => { saved = next; });
@@ -75,8 +92,8 @@ ipcMain.handle('check-aws-profile', () => ({ ok: true, source: 'sso', message: '
 ipcMain.handle('check-gcloud-adc', () => ({ live: true, present: true, canSignUrls: false, hasCli: true, message: 'Fixture application default credentials found.' }));
 ipcMain.handle('set-region-override', () => true);
 ipcMain.handle('create-folder', (_, ...args) => { mutations.push(['create-folder', ...args]); return true; });
-ipcMain.handle('get-object-url', (_, ...args) => { downloadChecks.push(['get-object-url', ...args]); return 'data:text/plain,fixture-download'; });
-ipcMain.handle('verify-object-url', (_, url) => { downloadChecks.push(['verify-object-url', url]); return { ok: true }; });
+ipcMain.handle('get-object-url', (_, ...args) => { downloadChecks.push(['get-object-url', ...args]); return 'https://download.fixture.invalid/file'; });
+ipcMain.handle('verify-object-url', (_, url) => { downloadChecks.push(['verify-object-url', url]); return downloadVerification; });
 ipcMain.handle('delete-object', (_, ...args) => { mutations.push(['delete-object', ...args]); return { message: 'Fixture removed' }; });
 
 app.whenReady().then(async () => {
@@ -100,7 +117,13 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(output, name + '.png'), (await win.webContents.capturePage()).toPNG());
   };
   try {
-    await win.loadFile(path.join(__dirname, '..', 'index.html'));
+    // This optional path runs the same checks on the actual packaged app.asar.
+    if (process.env.OBROWSER_TEST_APP) {
+      const factory = require(path.join(appRoot, 'storage-clients/StorageClientFactory.js'));
+      assert.ok(factory.getSupportedClientTypes().includes('gcs'), 'packaged cloud SDK dependencies load');
+      console.log('PASS packaged storage clients and SDK dependencies load');
+    }
+    await win.loadFile(path.join(appRoot, 'index.html'));
     await run('await loadConnections(); themePreference = "light"; applyTheme();');
     await check('empty workspace has an actionable welcome', 'return !!document.querySelector(".welcome-state button") && document.getElementById("browserToolbar").hidden;');
     await shot('01-welcome');
@@ -131,10 +154,12 @@ app.whenReady().then(async () => {
     await shot('04-objects-dark');
     await run('themePreference = "light"; applyTheme(); document.querySelectorAll("#fileList .file-item")[3].click();');
     await check('single click selects without previewing', 'return selectedFiles.size === 1 && !document.getElementById("selectionBar").hidden && getComputedStyle(document.getElementById("previewModal")).display === "none";');
-    await run('const click = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function() {}; try { await downloadSelected(); } finally { HTMLAnchorElement.prototype.click = click; }');
+    await run('await downloadSelected();');
     assert.equal(downloadChecks[0][0], 'get-object-url');
     assert.equal(downloadChecks[1][0], 'verify-object-url');
+    assert.equal(downloadChecks[2][0], 'start-download');
     console.log('PASS batch download uses the actual selection and verifies its URL');
+    await run('clearFinishedTransfers();');
     await run('document.querySelectorAll("#fileList .file-item")[5].dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));');
     await check('shift click selects a contiguous range', 'return selectedFiles.size === 3;');
     await shot('05-selection');
@@ -216,7 +241,7 @@ app.whenReady().then(async () => {
       try { await uploadFile(); } finally { HTMLInputElement.prototype.click = click; }
       fixturePicker.onchange({ target: { files: [] } });
     `);
-    await check('cancelling the picker creates no upload tasks', 'return uploadTasks.size === 0 && document.getElementById("uploadPanel").hidden;');
+    await check('cancelling the picker creates no upload tasks', 'return transferTasks.size === 0 && document.getElementById("transferPanel").hidden;');
     // Keep the picker captured at the S3 destination, but browse elsewhere
     // before selecting the synthetic files.
     await run('await selectConnection(workspaceConnections[1]);');
@@ -230,28 +255,28 @@ app.whenReady().then(async () => {
     `);
     await waitForUploadCount(1);
     assert.deepEqual(uploads[0].args.slice(0, 4), ['s3-demo', 'studio-assets', 'releases/launch-film <draft> & final.mp4', '/fixture/movie.mp4']);
-    await check('all selected files appear immediately, including queued files', `return !document.getElementById('uploadPanel').hidden && uploadTasks.size === 3 && document.querySelectorAll('.upload-item[data-status="queued"]').length === 2;`);
-    await check('upload toggle has a local chevron icon', `return document.querySelector('.upload-chevron svg path').getAttribute('d') === 'm5 9 7 7 7-7';`);
-    await check('file names are text and destinations stay bound to the picker location', `return document.querySelector('.upload-file-name').textContent === 'launch-film <draft> & final.mp4' && !document.querySelector('.upload-file-name draft') && document.querySelector('.upload-destination').textContent.includes('s3://studio-assets/releases/');`);
+    await check('all selected files appear immediately, including queued files', `return !document.getElementById('transferPanel').hidden && transferTasks.size === 3 && document.querySelectorAll('.transfer-item[data-status="queued"]').length === 2;`);
+    await check('upload toggle has a local chevron icon', `return document.querySelector('.transfer-chevron svg path').getAttribute('d') === 'm5 9 7 7 7-7';`);
+    await check('file names are text and destinations stay bound to the picker location', `return document.querySelector('.transfer-file-name').textContent === 'launch-film <draft> & final.mp4' && !document.querySelector('.transfer-file-name draft') && document.querySelector('.transfer-destination').textContent.includes('s3://studio-assets/releases/');`);
     uploadProgress(0, 1073741824, 2147483648);
-    await check('IPC progress displays per-file percentage and transferred bytes', `return document.querySelector('.upload-percent').textContent === '50%' && document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '50' && document.querySelector('.upload-bytes').textContent === '1.00 GB / 2.00 GB';`);
+    await check('IPC progress displays per-file percentage and transferred bytes', `return document.querySelector('.transfer-percent').textContent === '50%' && document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '50' && document.querySelector('.transfer-bytes').textContent === '1.00 GB / 2.00 GB';`);
     await shot('16-uploads-light');
     await run('themePreference = "dark"; applyTheme();');
     await shot('17-uploads-dark');
     win.setSize(980, 640);
     await shot('18-uploads-small');
     await check('upload panel is bounded and scrollable at the minimum window size', `
-      const panel = document.getElementById('uploadPanel');
-      const list = document.getElementById('uploadList');
+      const panel = document.getElementById('transferPanel');
+      const list = document.getElementById('transferList');
       return panel.getBoundingClientRect().bottom <= innerHeight && panel.getBoundingClientRect().top > 57
         && list.scrollHeight > list.clientHeight && panel.scrollWidth <= panel.clientWidth
         && document.querySelector('.browser-surface').clientHeight > 80;
     `);
-    await run('document.getElementById("uploadPanelToggle").click();');
+    await run('document.getElementById("transferPanelToggle").click();');
     uploadProgress(0, 1610612736, 2147483648);
-    await check('collapsing keeps uploads running and their summary visible', `return document.getElementById('uploadList').hidden && document.getElementById('uploadSummary').textContent === '1 uploading · 2 queued' && document.querySelector('.upload-percent').textContent === '75%';`);
-    await run('document.getElementById("uploadPanelToggle").click(); document.getElementById("clearUploadsButton").click();');
-    await check('active and queued uploads cannot be cleared', 'return uploadTasks.size === 3;');
+    await check('collapsing keeps uploads running and their summary visible', `return document.getElementById('transferList').hidden && document.getElementById('transferSummary').textContent === '1 uploading · 2 queued' && document.querySelector('.transfer-percent').textContent === '75%';`);
+    await run('document.getElementById("transferPanelToggle").click(); document.getElementById("clearTransfersButton").click();');
+    await check('active and queued uploads cannot be cleared', 'return transferTasks.size === 3;');
     // A new picker may append another destination without running a second
     // upload worker or changing the first batch's target.
     await run(`
@@ -260,29 +285,29 @@ app.whenReady().then(async () => {
       try { await uploadFile(); } finally { HTMLInputElement.prototype.click = click; }
       extraPicker.onchange({ target: { files: [{ name: 'notes.txt', path: '/fixture/notes.txt', size: 120 }] } });
     `);
-    await check('adding files during an upload appends to the same queue', `return uploadTasks.size === 4 && document.querySelectorAll('.upload-item[data-status="queued"]').length === 3;`);
+    await check('adding files during an upload appends to the same queue', `return transferTasks.size === 4 && document.querySelectorAll('.transfer-item[data-status="queued"]').length === 3;`);
     assert.equal(uploads.length, 1, 'only one file is in flight');
     uploadProgress(0, 2147483648, 2147483648, 'finalizing');
-    await check('all bytes sent does not mean the upload has succeeded', `return document.querySelector('.upload-state').textContent === 'Finalizing…' && document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '99' && !document.querySelector('.upload-item[data-status="completed"]');`);
+    await check('all bytes sent does not mean the upload has succeeded', `return document.querySelector('.transfer-state').textContent === 'Finalizing…' && document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '99' && !document.querySelector('.transfer-item[data-status="completed"]');`);
     uploads[0].resolve({ success: true });
     await waitForUploadCount(2);
-    await check('cloud success marks 100% and starts the next queued file', `return document.querySelector('.upload-percent').textContent === '100%' && document.querySelectorAll('.upload-item[data-status="completed"]').length === 1;`);
+    await check('cloud success marks 100% and starts the next queued file', `return document.querySelector('.transfer-percent').textContent === '100%' && document.querySelectorAll('.transfer-item[data-status="completed"]').length === 1;`);
     assert.deepEqual(uploads[1].args.slice(0, 3), ['s3-demo', 'studio-assets', 'releases/workspace-backup.zip']);
     uploadProgress(1, 104857600, 629145600);
     uploads[1].event.sender.send('upload-progress', { uploadId: uploads[1].args[4], status: 'failed', error: 'Fixture upload denied <script>window.uploadInjected=true</script>' });
     uploads[1].reject(new Error('Fixture upload denied <script>window.uploadInjected=true</script>'));
     await waitForUploadCount(3);
-    await check('a failed file preserves its error and does not stop the queue', `return document.querySelectorAll('.upload-item[data-status="failed"]').length === 1 && document.querySelector('.upload-item[data-status="failed"] .upload-error').textContent.includes('Fixture upload denied') && !window.uploadInjected;`);
-    await check('the queue scrolls to reveal the next active file', `const row = document.querySelector('.upload-item[data-status="preparing"]').getBoundingClientRect(); const list = document.getElementById('uploadList').getBoundingClientRect(); return row.top >= list.top && row.bottom <= list.bottom;`);
+    await check('a failed file preserves its error and does not stop the queue', `return document.querySelectorAll('.transfer-item[data-status="failed"]').length === 1 && document.querySelector('.transfer-item[data-status="failed"] .transfer-error').textContent.includes('Fixture upload denied') && !window.uploadInjected;`);
+    await check('the queue scrolls to reveal the next active file', `const row = document.querySelector('.transfer-item[data-status="preparing"]').getBoundingClientRect(); const list = document.getElementById('transferList').getBoundingClientRect(); return row.top >= list.top && row.bottom <= list.bottom;`);
     await run('themePreference = "light"; applyTheme();');
     win.setSize(1280, 840);
     await shot('19-upload-failure');
     uploads[2].resolve({ success: true });
     await waitForUploadCount(4);
     assert.deepEqual(uploads[3].args.slice(0, 3), ['gcs-demo', 'studio-research', 'notes.txt']);
-    await check('zero-byte uploads finish without NaN or Infinity', `const task = [...uploadTasks.values()].find(task => task.name === 'empty.txt'); return task.status === 'completed' && task.row.querySelector('.upload-percent').textContent === '100%' && task.row.querySelector('.upload-bytes').textContent === '0 B / 0 B';`);
-    await run('document.getElementById("clearUploadsButton").click();');
-    await check('clearing finished uploads retains the file still uploading', `return uploadTasks.size === 1 && document.querySelector('.upload-file-name').textContent === 'notes.txt' && !document.getElementById('uploadPanel').hidden;`);
+    await check('zero-byte uploads finish without NaN or Infinity', `const task = [...transferTasks.values()].find(task => task.name === 'empty.txt'); return task.status === 'completed' && task.row.querySelector('.transfer-percent').textContent === '100%' && task.row.querySelector('.transfer-bytes').textContent === '0 B / 0 B';`);
+    await run('document.getElementById("clearTransfersButton").click();');
+    await check('clearing finished uploads retains the file still uploading', `return transferTasks.size === 1 && document.querySelector('.transfer-file-name').textContent === 'notes.txt' && !document.getElementById('transferPanel').hidden;`);
     // Leave the upload targets before completion: the queue must not refresh
     // or sort unrelated storage that the user is now browsing.
     await run('await selectConnection(workspaceConnections[2]);');
@@ -291,11 +316,11 @@ app.whenReady().then(async () => {
     await run('await fixtureBatch;');
     assert.equal(listingCalls, listingsBeforeCompletion, 'completion does not reload an unrelated directory');
     assert.ok(listingCalls > listingsBeforeUploads, 'the user remained free to navigate');
-    await check('completion retains results without stealing the current connection', 'return currentConnection.id === "azure-demo" && !uploadsRunning && document.querySelector(".upload-state").textContent === "Completed";');
+    await check('completion retains results without stealing the current connection', 'return currentConnection.id === "azure-demo" && !uploadsRunning && document.querySelector(".transfer-state").textContent === "Completed";');
     uploadProgress(3, 1, 120);
-    await check('late progress events cannot regress a completed upload', 'return document.querySelector(".upload-percent").textContent === "100%";');
-    await run('clearFinishedUploads();');
-    await check('the panel can be dismissed after every upload finishes', 'return uploadTasks.size === 0 && document.getElementById("uploadPanel").hidden;');
+    await check('late progress events cannot regress a completed upload', 'return document.querySelector(".transfer-percent").textContent === "100%";');
+    await run('clearFinishedTransfers();');
+    await check('the panel can be dismissed after every upload finishes', 'return transferTasks.size === 0 && document.getElementById("transferPanel").hidden;');
 
     await run(`window.finalBatch = enqueueUploads([{ name: 'visible.txt', path: '/fixture/visible.txt', size: 5 }], { connectionId: currentConnection.id, connectionName: currentConnection.name, type: currentConnection.type, bucket: currentBucket, prefix: currentPrefix });`);
     await waitForUploadCount(5);
@@ -304,7 +329,71 @@ app.whenReady().then(async () => {
     await run('await finalBatch;');
     assert.equal(listingCalls, beforeVisibleCompletion + 1, 'successful uploads refresh their visible destination');
     await check('newly uploaded files retain the existing newest-first sort', 'return currentSortField === "modified" && currentSortDirection === "desc";');
-    await run('clearFinishedUploads();');
+    await run('clearFinishedTransfers();');
+    holdDownloads = true;
+    const downloadStartIndex = downloads.length;
+    await run(`
+      selectedFiles = new Set(['沉淀物料包_MiniMax-H3竖屏短剧.tar.gz', 'unknown-size.bin']);
+      window.downloadBatch = downloadSelected();
+    `);
+    await check('batch download appears in Transfers before preparation completes', `return document.querySelector('#transferPanelToggle').textContent.includes('Transfers') && !document.getElementById('transferPanel').hidden && [...transferTasks.values()].filter(task => task.direction === 'download').length === 2;`);
+    await run('await downloadBatch;');
+    const firstDownload = downloads[downloadStartIndex];
+    const secondDownload = downloads[downloadStartIndex + 1];
+    downloadProgress(firstDownload, 'downloading', 1073741824, 2147483648, { path: '/fixture/中文目录/沉淀物料包.tar.gz' });
+    downloadProgress(secondDownload, 'downloading', 1048576, null);
+    await check('download progress shows real bytes, percentage and save path', `const task = [...transferTasks.values()].find(task => task.name.endsWith('.tar.gz')); return task.row.querySelector('.transfer-percent').textContent === '50%' && task.row.querySelector('.transfer-bytes').textContent === '1.00 GB / 2.00 GB' && task.row.querySelector('.transfer-save-path').textContent.includes('/fixture/中文目录/');`);
+    await check('unknown download sizes are indeterminate, not a fabricated percentage', `const task = [...transferTasks.values()].find(task => task.name === 'unknown-size.bin'); return !task.row.querySelector('[role="progressbar"]').hasAttribute('aria-valuenow') && task.row.querySelector('.transfer-percent').textContent === '—' && task.row.querySelector('.transfer-bytes').textContent === '1.00 MB / Size unknown';`);
+    await run(`window.mixedUpload = enqueueUploads([{ name: 'new-assets.zip', path: '/fixture/mixed.zip', size: 104857600 }], { connectionId: currentConnection.id, connectionName: currentConnection.name, type: currentConnection.type, bucket: currentBucket, prefix: currentPrefix });`);
+    await waitForUploadCount(6);
+    uploadProgress(5, 26214400, 104857600);
+    await check('uploads and downloads share one summary without mixing progress', `return document.getElementById('transferSummary').textContent === '1 uploading · 2 downloading' && document.querySelector('.transfer-item[data-direction="upload"] .transfer-percent').textContent === '25%' && document.querySelector('.transfer-item[data-direction="download"] .transfer-percent').textContent === '50%';`);
+    await run('document.getElementById("transferList").scrollTop = 0;');
+    await shot('20-transfers-light');
+    await run('themePreference = "dark"; applyTheme();');
+    await shot('21-transfers-dark');
+    win.setSize(980, 640);
+    await shot('22-transfers-small');
+    await check('mixed transfers fit the smallest window', 'return document.documentElement.scrollWidth <= innerWidth && document.getElementById("transferPanel").scrollWidth <= document.getElementById("transferPanel").clientWidth;');
+    await run('toggleTransferPanel(); await selectConnection(workspaceConnections[1]);');
+    downloadProgress(firstDownload, 'downloading', 1610612736, 2147483648);
+    await check('download progress survives folding and navigating to another connection', `return document.getElementById('transferList').hidden && currentConnection.id === 'gcs-demo' && document.querySelector('.transfer-item[data-direction="download"] .transfer-percent').textContent === '75%';`);
+    await run('toggleTransferPanel(); clearFinishedTransfers();');
+    await check('active downloads cannot be cleared', 'return transferTasks.size === 3;');
+    downloadProgress(firstDownload, 'downloading', 2147483648, 2147483648);
+    await check('received bytes alone never mark a download complete', `const task = transferTasks.get(${JSON.stringify(firstDownload.downloadId)}); return task.status === 'downloading' && task.row.querySelector('.transfer-percent').textContent === '99%';`);
+    downloadProgress(firstDownload, 'completed', 2147483648, 2147483648);
+    downloadProgress(secondDownload, 'failed', 1048576, null, { error: 'Network interrupted <script>window.downloadInjected=true</script>' });
+    await check('native completion and late failures produce distinct final states', `return document.querySelectorAll('.transfer-item[data-status="completed"]').length === 1 && document.querySelectorAll('.transfer-item[data-status="failed"]').length === 1 && document.querySelector('.transfer-item[data-status="failed"] .transfer-error').textContent.includes('Network interrupted') && !window.downloadInjected;`);
+    downloadProgress(firstDownload, 'downloading', 1, 2147483648);
+    await check('late download events do not regress completed tasks', `return transferTasks.get(${JSON.stringify(firstDownload.downloadId)}).status === 'completed';`);
+    uploads[5].resolve({ success: true });
+    await run('await mixedUpload; clearFinishedTransfers(); themePreference = "light"; applyTheme();');
+    win.setSize(1280, 840);
+
+    downloadVerification = { ok: false, message: 'Storage service returned 403: Access denied' };
+    const beforeRejectedDownload = downloads.length;
+    await run('selectedFiles = new Set(["denied.bin"]); await downloadSelected();');
+    assert.equal(downloads.length, beforeRejectedDownload, 'invalid signed links never launch a native download');
+    await check('preflight failures remain visible in Transfers', `return document.querySelector('.transfer-item').dataset.status === 'failed' && document.querySelector('.transfer-error').textContent.includes('403');`);
+    downloadVerification = { ok: true };
+    await run('clearFinishedTransfers();');
+    // All three download entry points must use the same queue.
+    const rowDownloadCount = downloads.length;
+    await run(`document.querySelector('.file-item[data-key="readme.md"] button[title="Download"]').click();`);
+    await run('while (downloadsPreparing) await new Promise(resolve => setTimeout(resolve, 10));');
+    assert.equal(downloads.length, rowDownloadCount + 1, 'row download is tracked');
+    downloadProgress(downloads.at(-1), 'cancelled', 0, null);
+    await check('cancelling a save is visible and can be cleared', `return document.querySelector('.transfer-state').textContent === 'Cancelled' && !document.getElementById('clearTransfersButton').disabled;`);
+    await run('clearFinishedTransfers(); await previewFile({Key:"readme.md"});');
+    const previewDownloadCount = downloads.length;
+    await run('await downloadFile(encodeURIComponent("readme.md"));');
+    assert.equal(downloads.length, previewDownloadCount + 1, 'preview download is tracked');
+    await check('preview downloads reveal the transfer panel', `return getComputedStyle(document.getElementById('previewModal')).display === 'none' && !document.getElementById('transferPanel').hidden;`);
+    downloadProgress(downloads.at(-1), 'completed', 0, 0);
+    await check('empty downloads show a valid completed state', `return document.querySelector('.transfer-percent').textContent === '100%' && document.querySelector('.transfer-bytes').textContent === '0 B / 0 B';`);
+    await run('clearFinishedTransfers();');
+    await require('./native-download-smoke.cjs')({ win, run, check, output });
     assert.deepEqual(externalRequests, [], 'UI must work without external network requests');
     assert.deepEqual(errors, [], 'No Chromium runtime errors');
     if (process.argv.includes('--update-screenshots')) {

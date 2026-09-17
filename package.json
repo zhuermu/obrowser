@@ -1,6 +1,6 @@
 {
   "name": "obrowser",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Cross-platform Object Storage Browser desktop application",
   "main": "main.js",
   "scripts": {
@@ -87,12 +87,22 @@
       "target": "AppImage",
       "icon": "obrowser.png"
     },
+    "dmg": {
+      "sign": true
+    },
     "directories": {
       "output": "dist",
       "buildResources": "build"
     },
     "files": [
-      "**/*",
+      "*.js",
+      "index.html",
+      "ui.css",
+      "storage-clients/**/*.js",
+      "obrowser.{svg,icns,ico,png}",
+      "!**/.env{,.*}",
+      "!**/{.agents,.codex,.azurite}{,/**}",
+      "!dist{,/**}",
       "!**/node_modules/**/{CHANGELOG.md,README.md,README,readme.md,readme}",
       "!**/node_modules/**/{test,__tests__,tests,powered-test,example,examples}/**",
       "!**/node_modules/**/*.d.ts",
@@ -132,7 +142,7 @@
     "asar": true,
     "compression": "maximum",
     "afterSign": null,
-    "afterPack": null,
+    "afterPack": "scripts/check-package.cjs",
     "afterAllArtifactBuild": null,
     "npmRebuild": false,
     "buildDependenciesFromSource": false,
